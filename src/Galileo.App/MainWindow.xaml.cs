@@ -1857,7 +1857,7 @@ public sealed partial class MainWindow : Window
                     same = string.Equals(GroupKeyRank(fresh[i], _state.GroupBy).Key,
                                          GroupKeyRank(_explorerItems[i], _state.GroupBy).Key,
                                          StringComparison.OrdinalIgnoreCase);
-            if (!same) ReloadKeepingSelection();
+            if (!same) RefreshFolderInPlace();
             return;
         }
 
@@ -3278,7 +3278,7 @@ public sealed partial class MainWindow : Window
 
             var result = await RunTransferWithUiAsync(_currentFolder, existing, move);
             if (move && !result.Canceled && result.Errors == 0) _fileClip = null; // a cut is consumed only on a clean paste
-            LoadCurrentFolder();
+            RefreshFolderInPlace(); // slot the pasted files in without losing scroll/selection/thumbnails
             var msg = DescribeTransfer(result, move);
             if (missing > 0) msg += $" ({missing} source(s) no longer existed)";
             StatusText.Text = msg;
@@ -3334,6 +3334,52 @@ public sealed partial class MainWindow : Window
             ResortExplorerInPlace(item);
         }
         catch (Exception ex) { StatusText.Text = $"Rename failed: {ex.Message}"; }
+    }
+
+    /// <summary>Refreshes the current folder from disk while KEEPING existing item objects (their
+    /// loaded thumbnails), the selection, and the scroll position — unlike LoadCurrentFolder, which
+    /// rebuilds everything. New files slot in at their sorted spots; removed ones disappear. Grouped
+    /// views rebuild their lightweight group wrappers around the same objects and restore scroll.</summary>
+    private void RefreshFolderInPlace()
+    {
+        if (_currentFolder is null || !Directory.Exists(_currentFolder)) { LoadCurrentFolder(); return; }
+        if (!string.IsNullOrEmpty(_searchQuery)) { ReloadKeepingSelection(); return; } // search results: old path
+
+        var fresh = _fs.List(_currentFolder, showWindowsHidden: _showWindowsHidden, _showAppHidden);
+
+        // Adopt the already-shown object for every path that still exists (keeps its loaded icon);
+        // only genuinely new files use the freshly-listed object.
+        var shown = new Dictionary<string, ExplorerItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var it in _explorerItems) shown[it.Path] = it;
+        _explorerRaw = fresh.Select(f => shown.TryGetValue(f.Path, out var old) ? old : f).ToList();
+
+        if (_state.GroupBy == "None")
+        {
+            ReconcileExplorerItems(SortItems(_explorerRaw));
+            UpdateExplorerEmptyState();
+            return;
+        }
+
+        // Grouped: the ItemsSource swap would drop selection and scroll — save and restore both.
+        var list = ActiveExplorerList();
+        var selected = list.SelectedItems.OfType<ExplorerItem>().ToHashSet();
+        var scroll = FindScrollViewer(list)?.VerticalOffset ?? 0;
+        ApplySortAndGroup();
+        foreach (var it in _explorerItems) if (selected.Contains(it)) list.SelectedItems.Add(it);
+        if (scroll > 0)
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+                () => FindScrollViewer(ActiveExplorerList())?.ChangeView(null, scroll, null, disableAnimation: true));
+    }
+
+    private static ScrollViewer? FindScrollViewer(DependencyObject root)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var c = VisualTreeHelper.GetChild(root, i);
+            if (c is ScrollViewer sv) return sv;
+            if (FindScrollViewer(c) is { } found) return found;
+        }
+        return null;
     }
 
     /// <summary>Re-sorts the visible listing after an in-place change (rename) WITHOUT reloading the
@@ -4330,7 +4376,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var result = await RunTransferWithUiAsync(target, paths, move);
-            LoadCurrentFolder();
+            RefreshFolderInPlace(); // a move out of this folder removes items in place; no full reload
             StatusText.Text = DescribeTransfer(result, move, TabHeaderFor(target));
         }
         catch (Exception ex) { StatusText.Text = $"Drop failed: {ex.Message}"; App.Log("Drop", ex); }
