@@ -1,7 +1,0 @@
-# Python relay runtime artifacts
-.venv/
-__pycache__/
-*.pyc
-*.db
-relay.out
-relay.err

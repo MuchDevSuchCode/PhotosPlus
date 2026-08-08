@@ -60,7 +60,7 @@ public sealed class VaultEntry
 /// of the app can use them as ordinary files; locking re-encrypts changes and securely wipes that
 /// folder.
 /// </summary>
-public sealed class Vault : IShareSource
+public sealed class Vault
 {
     public string Root { get; }
     public VaultManifest Manifest { get; private set; }
@@ -553,73 +553,6 @@ public sealed class Vault : IShareSource
         finally { CryptographicOperations.ZeroMemory(json); }
     }
 
-    // ---------- Secure P2P sharing ----------
-
-    /// <summary>Display name shown to a remote viewer (the vault's name).</summary>
-    public string ShareName => Manifest.Name;
-
-    // Opaque, stable per-file id for sharing (a hash of the relative path). Used as the audit object id, so
-    // the relay never learns the filename, and as the fetch key. Recomputed from the live working folder so
-    // files added/removed while the vault is unlocked are reflected immediately (the index only updates on lock).
-    private Dictionary<string, string> _shareMap = new(); // share id -> full working-folder path
-
-    private static string ShareId(string rel) =>
-        Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("share:" + rel)).AsSpan(0, 8)).ToLowerInvariant();
-
-    /// <summary>Entries currently available to a remote peer — enumerated from the live working folder
-    /// (empty while locked), so adds/deletes show up without locking. Each is referenced on the wire and in
-    /// the audit log only by an opaque id (a hash of its path), never by name.</summary>
-    public IReadOnlyList<VaultEntry> ShareEntries()
-    {
-        if (_dek is null || WorkingDir is null || !Directory.Exists(WorkingDir)) { _shareMap = new(); return Array.Empty<VaultEntry>(); }
-        var list = new List<VaultEntry>();
-        var map = new Dictionary<string, string>();
-        foreach (var f in Directory.EnumerateFiles(WorkingDir, "*", SearchOption.AllDirectories))
-        {
-            var rel = Path.GetRelativePath(WorkingDir, f).Replace(Path.DirectorySeparatorChar, '/');
-            var id = ShareId(rel);
-            map[id] = f;
-            var fi = new FileInfo(f);
-            list.Add(new VaultEntry { RelPath = rel, BlobId = id, Size = fi.Length, ModifiedUtcTicks = fi.LastWriteTimeUtc.Ticks });
-        }
-        _shareMap = map;
-        return list;
-    }
-
-    /// <summary>Opens a read stream over a shared entry by its opaque id. The plaintext is read from the
-    /// ACL-restricted working folder and is never copied elsewhere on the host — it only streams, chunk by
-    /// chunk and re-encrypted per peer, to the remote viewer.</summary>
-    public Stream OpenSharedEntry(string id)
-    {
-        if (_dek is null || WorkingDir is null) throw new InvalidOperationException("Vault is locked.");
-        if (!_shareMap.TryGetValue(id, out var path)) { ShareEntries(); _shareMap.TryGetValue(id, out path); }
-        if (path is null || !File.Exists(path)) throw new FileNotFoundException("No such shared entry.");
-        return File.OpenRead(path);
-    }
-
-    // ---------- Secure P2P sharing — writes (a friend with a read+write grant) ----------
-
-    /// <summary>Whether a remote viewer's writes can be applied right now (vault unlocked with a working folder).</summary>
-    public bool CanWrite => _dek is not null && WorkingDir is not null && Directory.Exists(WorkingDir);
-
-    // Concurrent: each connected peer serves uploads from its own task.
-    private readonly ConcurrentDictionary<string, (string part, FileStream fs)> _uploads = new(StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>Resolve a vault-relative path to a full path, rejecting anything that escapes the working
-    /// folder (defends against "../" traversal from a remote peer).</summary>
-    private string SafeFull(string rel)
-    {
-        if (WorkingDir is null) throw new InvalidOperationException("Vault is locked.");
-        rel = (rel ?? "").Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar)
-                          .TrimStart(Path.DirectorySeparatorChar);
-        var root = Path.GetFullPath(WorkingDir);
-        var full = Path.GetFullPath(Path.Combine(root, rel));
-        if (!full.Equals(root, StringComparison.OrdinalIgnoreCase)
-            && !full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-            throw new UnauthorizedAccessException("Path escapes the vault.");
-        return full;
-    }
-
     private static string UniqueFsPath(string path)
     {
         if (!File.Exists(path) && !Directory.Exists(path)) return path;
@@ -631,60 +564,6 @@ public sealed class Vault : IShareSource
             var p = Path.Combine(dir, $"{name} ({i}){ext}");
             if (!File.Exists(p) && !Directory.Exists(p)) return p;
         }
-    }
-
-    public void CreateFolder(string rel)
-    {
-        if (!CanWrite) throw new InvalidOperationException("Vault is locked.");
-        Directory.CreateDirectory(UniqueFsPath(SafeFull(rel)));
-    }
-
-    /// <summary>Begin an upload to <paramref name="rel"/>: returns a writable stream over a hidden temp file
-    /// inside the working folder. The host writes bytes, then calls CommitUpload (or AbortUpload).</summary>
-    public Stream BeginUpload(string rel)
-    {
-        if (!CanWrite) throw new InvalidOperationException("Vault is locked.");
-        var full = SafeFull(rel);
-        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        // Per-upload unique temp name: two peers writing the same path must never share a part file.
-        var part = full + "." + Guid.NewGuid().ToString("N") + ".uploadpart";
-        var fs = File.Create(part);
-        try { File.SetAttributes(part, FileAttributes.Hidden); } catch { }
-        if (!_uploads.TryAdd(rel, (part, fs)))
-        {
-            try { fs.Dispose(); } catch { }
-            try { File.Delete(part); } catch { }
-            throw new InvalidOperationException("An upload to this path is already in progress.");
-        }
-        return fs;
-    }
-
-    public void CommitUpload(string rel)
-    {
-        if (!_uploads.TryRemove(rel, out var u)) return;
-        try { u.fs.Flush(true); } catch { }
-        try { u.fs.Dispose(); } catch { }
-        var dest = UniqueFsPath(SafeFull(rel));
-        try { File.SetAttributes(u.part, FileAttributes.Normal); } catch { }
-        File.Move(u.part, dest);
-    }
-
-    public void AbortUpload(string rel)
-    {
-        if (!_uploads.TryRemove(rel, out var u)) return;
-        try { u.fs.Dispose(); } catch { }
-        try { File.Delete(u.part); } catch { }
-    }
-
-    public void DeleteEntry(string id)
-    {
-        if (!CanWrite) throw new InvalidOperationException("Vault is locked.");
-        if (!_shareMap.TryGetValue(id, out var path)) { ShareEntries(); _shareMap.TryGetValue(id, out path); }
-        if (path is null) return;
-        var full = SafeFull(Path.GetRelativePath(WorkingDir!, path));
-        // Deleted vault plaintext must not linger in free space — overwrite before deleting.
-        if (File.Exists(full)) { try { File.SetAttributes(full, FileAttributes.Normal); } catch { } VaultCrypto.OverwriteAndDelete(full); }
-        else if (Directory.Exists(full)) VaultCrypto.WipeDirectory(full);
     }
 
     // ---------- Helpers ----------

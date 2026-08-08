@@ -115,11 +115,6 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _backupTimer = new() { Interval = TimeSpan.FromMinutes(30) };
     private readonly ObservableCollection<Models.VaultInfo> _vaultList = new();
     private readonly DispatcherTimer _vaultIdleTimer = new();
-    // Footer online/offline orb (shown in the explorer once secure sharing is set up); a light poll keeps it
-    // current as the relay drops/reconnects.
-    private readonly DispatcherTimer _netTimer = new() { Interval = TimeSpan.FromSeconds(4) };
-    private readonly Microsoft.UI.Xaml.Media.SolidColorBrush _orbOnline = new(Microsoft.UI.Colors.LimeGreen);
-    private readonly Microsoft.UI.Xaml.Media.SolidColorBrush _orbOffline = new(Microsoft.UI.Colors.IndianRed);
     // Commit the unlocked vault's working folder to its encrypted store continuously, so a non-graceful
     // exit can't lose changes. Backstop (periodic) + a short debounce fired when the working folder changes.
     private readonly DispatcherTimer _vaultFlushTimer = new() { Interval = TimeSpan.FromSeconds(15) };
@@ -127,8 +122,6 @@ public sealed partial class MainWindow : Window
     private bool _closingForVaultLock;  // guards the re-entrant AppWindow.Closing lock flow
     // Push: watch the unlocked vault's working folder so we can tell active viewers the instant it changes
     // (so they re-list without waiting for their poll). Debounced to coalesce bursts (e.g. multi-file adds).
-    private FileSystemWatcher? _vaultPushWatcher;
-    private readonly DispatcherTimer _vaultPushDebounce = new() { Interval = TimeSpan.FromMilliseconds(700) };
 
     // Polls for mounted/removed drives so the sidebar and This PC view stay current
     // (WinUI 3 doesn't surface WM_DEVICECHANGE directly).
@@ -161,8 +154,6 @@ public sealed partial class MainWindow : Window
     // Privacy gate (unlocked once per session after a successful Hello check)
     private bool _helloUnlocked;
 
-    // True between a gallery click and the viewer image opening, to run the connected animation.
-    private bool _pendingConnectedAnim;
 
     // False until the file-manager half of the window is built. A window opened to show a single photo
     // skips it entirely and only pays for it if the user actually navigates to the explorer.
@@ -193,7 +184,6 @@ public sealed partial class MainWindow : Window
         _secondaryWindow = secondaryWindow;
         InitializeComponent();
         _library = new PhotoLibrary(_state);
-        PhotoGrid.ItemsSource = _view;
 
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var id = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
@@ -266,15 +256,6 @@ public sealed partial class MainWindow : Window
         _vaultIdleTimer.Tick += VaultIdle_Tick;
         _vaultFlushTimer.Tick += (_, _) => FlushVaultSoon();
         _vaultFlushDebounce.Tick += (_, _) => { _vaultFlushDebounce.Stop(); FlushVaultSoon(); };
-        _remoteSyncTimer.Tick += (_, _) => RemoteSyncTick();
-        _remoteIdleTimer.Tick += (_, _) => RemoteIdleTick();
-        _netTimer.Tick += (_, _) => RefreshNetIndicator();
-        _netTimer.Start(); // always running; the orb shows/hides itself based on context
-        _vaultPushDebounce.Tick += (_, _) =>
-        {
-            _vaultPushDebounce.Stop();
-            if (_sharing?.HasActiveViewers == true) _ = _sharing.NotifyVaultChangedAsync();
-        };
         _volSaveDebounce.Tick += (_, _) => { _volSaveDebounce.Stop(); _state.Save(); };
 
         // A drag that leaves without dropping must not poison the NEXT drag's move/copy decision.
@@ -308,11 +289,6 @@ public sealed partial class MainWindow : Window
             }
             if (!_windowActive) ReHideOnBackground();
         };
-        // Idle tracking for remote-browse auto-disconnect: any pointer/key activity counts as "not idle".
-        RootGrid.PointerMoved += (_, _) => { if (_remoteBrowse is not null) _lastRemoteActivity = DateTimeOffset.Now; };
-        RootGrid.AddHandler(UIElement.KeyDownEvent,
-            new KeyEventHandler((_, _) => { if (_remoteBrowse is not null) _lastRemoteActivity = DateTimeOffset.Now; }), handledEventsToo: true);
-
         // When the clipboard changes from OUTSIDE Galileo (another app, or a text/image copy), drop our
         // in-app file clip so a later paste uses the new content — not a stale earlier file copy.
         // Compare CONTENT rather than counting events: SetContent can raise zero or several
@@ -422,7 +398,6 @@ public sealed partial class MainWindow : Window
             _shell.WipeTemp();            // device temp copies are process-wide — a guest must not wipe the primary's
             _vaults.WipeOrphanWorkDirs();
             ArchiveService.WipeOrphans(); // clear any leftover extracted-zip temp dirs from a prior run
-            WipeShareTempDirs();          // clear any leftover remote-browse temp copies from a prior run
             RecoverRenameJournal();       // restore names stranded by a crash mid bulk-rename
         }
         // Guest photo windows get no vault affordances at all: vault lifecycle (unlock/lock/share)
@@ -607,6 +582,28 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Opens one image: loads its containing folder as the gallery and jumps to it.</summary>
+    /// <summary>Opens a local file in the right in-app surface: image → viewer, video/audio → player,
+    /// anything else → its default app. Used for vault files that must stay in-process.</summary>
+    private async Task OpenLocalFileInViewerAsync(string path)
+    {
+        try
+        {
+            if (PhotoLibrary.IsSupported(path)) await OpenSinglePhotoAsync(path);
+            else if (PhotoLibrary.IsMedia(path))
+            {
+                var fi = new FileInfo(path);
+                var item = new ExplorerItem(path, ExplorerItemKind.File, fi.Length, fi.LastWriteTime, fi.Extension);
+                OpenVideoFromExplorer(item);
+            }
+            else
+            {
+                try { ShellOps.AllowForeground(); System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = path, UseShellExecute = true }); }
+                catch (Exception ex) { StatusText.Text = ex.Message; }
+            }
+        }
+        catch (Exception ex) { App.Log("OpenLocalFile", ex); }
+    }
+
     private async Task OpenSinglePhotoAsync(string path)
     {
         var folder = System.IO.Path.GetDirectoryName(path);
@@ -638,7 +635,6 @@ public sealed partial class MainWindow : Window
         RefreshView();
 
         StatusText.Text = $"{_allPhotos.Count} photo(s)";
-        EmptyState.Visibility = _allPhotos.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ===================== Drag & drop =====================
@@ -715,7 +711,6 @@ public sealed partial class MainWindow : Window
         RefreshView();
 
         StatusText.Text = $"{_allPhotos.Count} photo(s) in {folder}";
-        EmptyState.Visibility = _allPhotos.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>Rebuilds the visible collection from filters (hidden album, favorites).</summary>
@@ -729,72 +724,15 @@ public sealed partial class MainWindow : Window
         foreach (var p in q) _view.Add(p);
     }
 
-    private async void PhotoGrid_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
-    {
-        if (args.Item is not PhotoItem item) return;
-        // Recycled out (scrolled off) — drop any queued decode so a fast scroll can't flood the pipeline.
-        if (args.InRecycleQueue) { item.CancelThumbnailLoad(); return; }
-        if (item.Thumbnail is null)
-            await item.LoadThumbnailAsync();
-    }
-
-    // ===================== Gallery <-> Viewer =====================
-
-    private void PhotoGrid_ItemClick(object sender, ItemClickEventArgs e)
-    {
-        if (e.ClickedItem is PhotoItem item)
-        {
-            _currentIndex = _view.IndexOf(item);
-            try { PhotoGrid.PrepareConnectedAnimation("toViewer", item, "PhotoThumb"); _pendingConnectedAnim = true; }
-            catch { _pendingConnectedAnim = false; }
-            ShowViewer();
-            _ = LoadCurrentAsync();
-        }
-    }
+    // ===================== Viewer =====================
 
     private void BackToGallery_Click(object sender, RoutedEventArgs e) => ShowExplorer();
-
-    /// <summary>Completely closes the gallery: clears all loaded photos and returns to the empty state.</summary>
-    private void CloseGallery_Click(object sender, RoutedEventArgs e)
-    {
-        _allPhotos.Clear();
-        _view.Clear();
-        _currentIndex = -1;
-        _obscured.Clear();
-        ViewerImage.Source = null;
-
-        // Forget the last folder so the app starts empty next launch too.
-        _state.LastFolder = null;
-        _state.Save();
-
-        _showHiddenAlbum = false;
-        HiddenAlbumButton.IsChecked = false;
-        _favoritesOnly = false;
-        FavoritesFilterButton.IsChecked = false;
-
-        ShowExplorer();
-        EmptyState.Visibility = Visibility.Visible;
-        ModeLabel.Text = "";
-        StatusText.Text = "Gallery closed";
-    }
-
-    private void ShowGallery()
-    {
-        ViewerView.Visibility = Visibility.Collapsed;
-        CollageView.Visibility = Visibility.Collapsed;
-        GalleryView.Visibility = Visibility.Visible;
-        InfoPanel.Visibility = Visibility.Collapsed;
-        _chromeTimer.Stop();
-        ModeLabel.Text = _showHiddenAlbum ? "Hidden album" : "";
-    }
 
     private void ShowViewer()
     {
         ExplorerView.Visibility = Visibility.Collapsed;
-        GalleryView.Visibility = Visibility.Collapsed;
         CollageView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Visible;
-        RefreshNetIndicator(); // hide the footer orb behind the viewer
         UpdateChromeForDarkSurface();
         ShowChrome();
     }
@@ -816,16 +754,13 @@ public sealed partial class MainWindow : Window
 
         if (VideoEditorPanel.Visibility == Visibility.Visible || EditTimeline.Visibility == Visibility.Visible) CloseVideoEditor();
         StopVideo();
-        NoteRemoteView(null); // leaving the viewer → close any shared-file access
         ViewerView.Visibility = Visibility.Collapsed;
-        GalleryView.Visibility = Visibility.Collapsed;
         CollageView.Visibility = Visibility.Collapsed;
         SettingsOverlay.Visibility = Visibility.Collapsed;
         InfoPanel.Visibility = Visibility.Collapsed;
         ExplorerView.Visibility = Visibility.Visible;
         UpdateChromeForDarkSurface();
         ModeLabel.Text = ""; // the title-bar label is always visible — clear the viewed file's name on the way out
-        RefreshNetIndicator(); // restore the footer orb when back in the explorer
         _chromeTimer.Stop();
         // Re-assert the icon-grid cell size: when the explorer is re-shown after the viewer, the
         // ItemsWrapGrid can come back without ItemWidth/Height and render a thumbnail at full size.
@@ -866,7 +801,6 @@ public sealed partial class MainWindow : Window
         }
 
         EnterImageMode();
-        NoteRemoteView(item.Path); // log a view if this image is from a friend's shared vault
         _rotation = 0;
         _bmpW = _bmpH = 0;
 
@@ -1083,12 +1017,6 @@ public sealed partial class MainWindow : Window
             _bmpH = b.PixelHeight;
             if (IsAtFit) ResetView();
         }
-        if (_pendingConnectedAnim)
-        {
-            _pendingConnectedAnim = false;
-            try { ConnectedAnimationService.GetForCurrentView().GetAnimation("toViewer")?.TryStart(ViewerImage); }
-            catch { /* animation is best-effort */ }
-        }
     }
 
     private void Rotate_Click(object sender, RoutedEventArgs e)
@@ -1169,52 +1097,6 @@ public sealed partial class MainWindow : Window
     private void EyeHidePermanent_Click(object sender, RoutedEventArgs e)
     {
         if (Current is { } item) HideItemPermanently(item);
-    }
-
-    private async void HiddenAlbum_Click(object sender, RoutedEventArgs e)
-    {
-        if (HiddenAlbumButton.IsChecked == true && !await EnsureHiddenUnlockedAsync())
-        {
-            HiddenAlbumButton.IsChecked = false;
-            return;
-        }
-        _showHiddenAlbum = HiddenAlbumButton.IsChecked == true;
-        ShowExplorer();
-        RefreshView();
-        StatusText.Text = _showHiddenAlbum
-            ? $"Hidden album — {_view.Count} photo(s)"
-            : $"{_view.Count} photo(s)";
-    }
-
-    private void FavoritesFilter_Click(object sender, RoutedEventArgs e)
-    {
-        _favoritesOnly = FavoritesFilterButton.IsChecked == true;
-        RefreshView();
-    }
-
-    // ===================== Selection =====================
-
-    private void SelectMode_Click(object sender, RoutedEventArgs e)
-    {
-        if (SelectModeButton.IsChecked == true)
-        {
-            PhotoGrid.SelectionMode = ListViewSelectionMode.Multiple;
-            PhotoGrid.IsItemClickEnabled = false;
-            ModeLabel.Text = "Select photos — then Collage";
-        }
-        else
-        {
-            PhotoGrid.SelectedItems.Clear();
-            PhotoGrid.SelectionMode = ListViewSelectionMode.None;
-            PhotoGrid.IsItemClickEnabled = true;
-            ModeLabel.Text = _showHiddenAlbum ? "Hidden album" : "";
-        }
-    }
-
-    private void PhotoGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (PhotoGrid.SelectionMode != ListViewSelectionMode.None)
-            StatusText.Text = $"{PhotoGrid.SelectedItems.Count} selected";
     }
 
     // ===================== Info / Reveal / Delete =====================
@@ -1306,13 +1188,8 @@ public sealed partial class MainWindow : Window
 
     private async void Collage_Click(object sender, RoutedEventArgs e)
     {
-        // Use the user's selection if they're picking photos; otherwise all visible photos.
-        List<PhotoItem> pool;
-        bool fromSelection = SelectModeButton.IsChecked == true && PhotoGrid.SelectedItems.Count > 0;
-        if (fromSelection)
-            pool = PhotoGrid.SelectedItems.OfType<PhotoItem>().Where(p => !p.IsHidden).ToList();
-        else
-            pool = _view.Where(p => !p.IsHidden).ToList();
+        // All visible (non-hidden) photos in the current pipeline.
+        var pool = _view.Where(p => !p.IsHidden).ToList();
 
         if (pool.Count == 0)
         {
@@ -1320,11 +1197,9 @@ public sealed partial class MainWindow : Window
             return;
         }
         _collageSource = pool;
-        // When the user hand-picked photos, include them all; otherwise sample a screen-friendly number.
-        _collageCount = fromSelection ? pool.Count : Math.Min(pool.Count, 12);
+        _collageCount = Math.Min(pool.Count, 12); // sample a screen-friendly number
 
         ExplorerView.Visibility = Visibility.Collapsed;
-        GalleryView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Collapsed;
         InfoPanel.Visibility = Visibility.Collapsed;
         CollageView.Visibility = Visibility.Visible;
@@ -1769,7 +1644,6 @@ public sealed partial class MainWindow : Window
     private void NavigateTo(string? path, bool addHistory = true)
     {
         ClearSearch();
-        CheckLeftRemoteBrowse(path); // leaving a shared-browse folder → securely wipe its downloaded copies
         _currentFolder = path;
         if (addHistory)
         {
@@ -1788,7 +1662,6 @@ public sealed partial class MainWindow : Window
     {
         HiddenFolderPlaceholder.Visibility = Visibility.Collapsed;
         ExplorerEmpty.Visibility = Visibility.Collapsed;
-        RefreshNetIndicator(); // refresh the footer online orb for this view
         UpdateFolderWatch();
         LoadSortPrefsForCurrentFolder(); // apply this folder's remembered sort/group
 
@@ -2488,18 +2361,7 @@ public sealed partial class MainWindow : Window
         BreadcrumbScroller.Visibility = Visibility.Visible;
     }
 
-    private void Refresh_Click(object sender, RoutedEventArgs e)
-    {
-        if (InRemoteBrowse(_currentFolder))
-            RefreshRemoteBrowse(); // re-list the owner's shared vault, not just the local temp copy
-        else LoadCurrentFolder();
-    }
-
-    /// <summary>True when the folder is inside the active shared-vault browse (top level or a subfolder).</summary>
-    private bool InRemoteBrowse(string? folder) =>
-        _remoteBrowse is { } rb && folder is not null
-        && (string.Equals(folder, rb.Dir, StringComparison.OrdinalIgnoreCase)
-            || folder.StartsWith(rb.Dir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+    private void Refresh_Click(object sender, RoutedEventArgs e) => LoadCurrentFolder();
 
     private async void ExplorerIcons_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
@@ -2797,7 +2659,6 @@ public sealed partial class MainWindow : Window
         {
             var file = await StorageFile.GetFileFromPathAsync(item.Path);
             ShowViewer();
-            NoteRemoteView(item.Path); // log a view if this video is from a friend's shared vault
             EnterVideoMode();
             var isAudio = PhotoLibrary.IsAudio(item.Path);
             AudioOverlay.Visibility = isAudio ? Visibility.Visible : Visibility.Collapsed;
@@ -3091,7 +2952,6 @@ public sealed partial class MainWindow : Window
     private async void NewFolder_Click(object sender, RoutedEventArgs e)
     {
         if (_currentFolder is null) { StatusText.Text = "Pick a folder first."; return; }
-        if (InRemoteBrowse(_currentFolder)) { await NewRemoteFolderAsync(_currentFolder); return; }
         try
         {
             var name = "New folder";
@@ -3108,29 +2968,19 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { StatusText.Text = $"Couldn't create folder: {ex.Message}"; }
     }
 
-    /// <summary>New folder inside a friend's shared vault: ask the owner to create it (needs write access),
-    /// then mirror it locally so it shows right away.</summary>
-    private async Task NewRemoteFolderAsync(string parentFolder)
+    /// <summary>Simple OK dialog for error/info messages.</summary>
+    private async Task MessageAsync(string title, string message)
     {
-        var box = new TextBox { Text = "New folder" };
-        box.Loaded += (_, _) => { box.Focus(FocusState.Programmatic); box.SelectAll(); };
         var dlg = new ContentDialog
         {
-            Title = "New folder", Content = box, PrimaryButtonText = "Create", CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary, XamlRoot = RootGrid.XamlRoot,
+            Title = title, Content = message, CloseButtonText = "OK", XamlRoot = RootGrid.XamlRoot,
         };
-        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
-        var name = box.Text.Trim();
-        if (string.IsNullOrEmpty(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) { StatusText.Text = "Invalid folder name."; return; }
-        try
-        {
-            await RemoteCreateFolderAsync(parentFolder, name);
-            try { Directory.CreateDirectory(Path.Combine(parentFolder, name)); } catch { } // mirror locally so it appears now
-            LoadCurrentFolder();
-            StatusText.Text = $"Created “{name}” in the share.";
-        }
-        catch (Exception ex) { StatusText.Text = "Couldn't create folder: " + FriendlyWriteError(ex); }
+        await dlg.ShowAsync();
     }
+
+    /// <summary>Ctrl+Alt+V: the discreet way in — opens the vault picker (unlock an existing vault or
+    /// create one) without any visible vault UI.</summary>
+    private async void OpenVaultShortcutAsync() => await ShowVaultPickerAsync();
 
     private void ExplorerSlideshow_Click(object sender, RoutedEventArgs e)
     {
@@ -3438,8 +3288,6 @@ public sealed partial class MainWindow : Window
             var missing = paths.Count - existing.Count;
             if (existing.Count == 0) { StatusText.Text = "Nothing to paste."; return; }
 
-            // Pasting into a friend's shared folder uploads into their vault (needs write access).
-            if (InRemoteBrowse(_currentFolder)) { await RemoteUploadItemsAsync(_currentFolder, existing); return; }
 
             var result = await RunTransferWithUiAsync(_currentFolder, existing, move);
             if (move && !result.Canceled && result.Errors == 0) _fileClip = null; // a cut is consumed only on a clean paste
@@ -3845,9 +3693,6 @@ public sealed partial class MainWindow : Window
         // In the bin view, "delete" means permanently shred that entry.
         if (_currentFolder == RecycleBin.Location) { await ShredBinEntriesAsync(new() { item }); return; }
 
-        // Inside a friend's share: ask the owner to delete it from their vault (needs write access).
-        if (InRemoteBrowse(_currentFolder)) { await ConfirmRemoteDeleteAsync(new List<string> { item.Path }, item.Name); return; }
-
         if (IsUndeletableRoot(item)) { StatusText.Text = "Drives can't be deleted."; return; }
 
         var permanent = IsShiftDown();
@@ -3887,14 +3732,6 @@ public sealed partial class MainWindow : Window
         // In the bin view, "delete" means permanently shred the selected entries.
         if (_currentFolder == RecycleBin.Location) { await ShredBinEntriesAsync(selection); return; }
 
-        // Inside a friend's share: ask the owner to delete from their vault (needs write access).
-        if (InRemoteBrowse(_currentFolder))
-        {
-            await ConfirmRemoteDeleteAsync(selection.Select(i => i.Path).ToList(),
-                selection.Count == 1 ? selection[0].Name : $"{selection.Count} items");
-            return;
-        }
-
         var permanent = IsShiftDown();
         var dialog = new ContentDialog
         {
@@ -3925,22 +3762,6 @@ public sealed partial class MainWindow : Window
             StatusText.Text = $"Moved {selection.Count} item(s) to the Recycle Bin.";
         }
         LoadCurrentFolder();
-    }
-
-    /// <summary>Confirm, then delete the given shared items from the friend's vault (owner-side).</summary>
-    private async System.Threading.Tasks.Task ConfirmRemoteDeleteAsync(IReadOnlyList<string> paths, string label)
-    {
-        var dialog = new ContentDialog
-        {
-            Title = "Delete from share",
-            Content = $"Delete {label} from the owner's vault? This removes it for everyone.",
-            PrimaryButtonText = "Delete",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = RootGrid.XamlRoot,
-        };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        await RemoteDeleteAsync(paths);
     }
 
     /// <summary>Permanently shreds bin entries (secure overwrite), used by the bin view's Delete.</summary>
@@ -4012,13 +3833,6 @@ public sealed partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private void PhotoGrid_RightTapped(object sender, RightTappedRoutedEventArgs e)
-    {
-        if ((e.OriginalSource as FrameworkElement)?.DataContext is not PhotoItem item) return;
-        _contextItem = item;
-        ShowImageMenu(PhotoGrid, e.GetPosition(PhotoGrid));
-        e.Handled = true;
-    }
 
     private void ShowImageMenu(FrameworkElement target, Windows.Foundation.Point position)
     {
@@ -4159,18 +3973,9 @@ public sealed partial class MainWindow : Window
     {
         item.IsFavorite = !item.IsFavorite;
         // A file you're browsing from a friend's share lives in a temp folder that's wiped when you leave, so
-        // don't persist its path. Instead, tell the owner so it shows in their access log.
-        var remote = _remoteBrowse is { } rb && rb.PathToId.ContainsKey(item.Path);
-        if (remote)
-        {
-            NoteRemoteFavorite(item.Path, item.IsFavorite);
-        }
-        else
-        {
-            if (item.IsFavorite) _state.FavoritePaths.Add(item.Path);
-            else _state.FavoritePaths.Remove(item.Path);
-            _state.Save();
-        }
+        if (item.IsFavorite) _state.FavoritePaths.Add(item.Path);
+        else _state.FavoritePaths.Remove(item.Path);
+        _state.Save();
         if (ReferenceEquals(item, Current)) UpdateFavoriteIcon();
         if (_favoritesOnly) RefreshView();
     }
@@ -4675,9 +4480,6 @@ public sealed partial class MainWindow : Window
 
         paths = paths.Where(p => File.Exists(p) || Directory.Exists(p)).ToList(); // only transfer what's actually there
         if (paths.Count == 0) return;
-        // Dropping onto a friend's shared folder uploads into their vault (needs write access) instead of a
-        // local move/copy — the temp browse folder isn't a real destination.
-        if (InRemoteBrowse(target)) { await RemoteUploadItemsAsync(target, paths); return; }
         // MTP/portable-device targets have no filesystem path — the copy engine would fail every file
         // ("Copied 0 item(s), N failed"). Route through the shell uploader like the Upload button does.
         if (ShellLoc.IsShell(target))
@@ -5604,13 +5406,11 @@ public sealed partial class MainWindow : Window
         CloseToBackSwitch.IsOn = _state.CloseToViewerBack;
         LockHiddenSwitch.IsOn = _state.LockHiddenAlbum;
         HideOnBackgroundSwitch.IsOn = _state.HideOnBackground;
-        RemoteIdleCombo.SelectedIndex = _state.RemoteIdleDisconnectMinutes switch { 5 => 0, 15 => 1, 30 => 2, 60 => 3, _ => 4 };
         VaultIdleCombo.SelectedIndex = _state.VaultIdleSeconds <= 0 ? 5
             : _state.VaultIdleSeconds <= 300 ? 0
             : _state.VaultIdleSeconds <= 600 ? 1
             : _state.VaultIdleSeconds <= 900 ? 2
             : _state.VaultIdleSeconds <= 1800 ? 3 : 4;
-        NeverLockWhileSharingSwitch.IsOn = _state.NeverLockWhileSharing;
         VaultHelloSwitch.IsOn = _state.VaultDefaultUseHello;
         VaultWipeSwitch.IsOn = _state.VaultWipeOnFailure;
         VaultWipeCountBox.Value = _state.VaultWipeAfterAttempts;
@@ -5629,7 +5429,6 @@ public sealed partial class MainWindow : Window
         ConvertRemovesOriginalSwitch.IsOn = _state.ConvertRemovesOriginal;
         CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
         BackupScheduleCombo.SelectedIndex = _state.BackupSchedule switch { "Daily" => 1, "Weekly" => 2, _ => 0 };
-        RelayUrlBox.Text = _state.SecureRelayUrl;
         RunInBackgroundSwitch.IsOn = _state.RunInBackground;
         StartWithWindowsSwitch.IsOn = _state.StartWithWindows;
         UpdateBackupUi();
@@ -5692,19 +5491,6 @@ public sealed partial class MainWindow : Window
         if (_loadingSettings) return;
         _state.HideOnBackground = HideOnBackgroundSwitch.IsOn;
         _state.Save();
-    }
-
-    private void RemoteIdleCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_loadingSettings) return;
-        _state.RemoteIdleDisconnectMinutes = RemoteIdleCombo.SelectedIndex switch { 0 => 5, 1 => 15, 2 => 30, 3 => 60, _ => 0 };
-        _state.Save();
-        // Apply immediately to a browse already in progress.
-        if (_remoteBrowse is not null)
-        {
-            if (_state.RemoteIdleDisconnectMinutes > 0) { _lastRemoteActivity = DateTimeOffset.Now; _remoteIdleTimer.Start(); }
-            else _remoteIdleTimer.Stop();
-        }
     }
 
     private void ThemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -6013,13 +5799,6 @@ public sealed partial class MainWindow : Window
         ResetVaultIdle(); // apply immediately to an open vault
     }
 
-    private void NeverLockWhileSharingSwitch_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (_loadingSettings) return;
-        _state.NeverLockWhileSharing = NeverLockWhileSharingSwitch.IsOn;
-        _state.Save();
-        ResetVaultIdle(); // re-arm so the new policy takes effect right away
-    }
 
     private void VaultHelloSwitch_Toggled(object sender, RoutedEventArgs e)
     {
@@ -6226,8 +6005,6 @@ public sealed partial class MainWindow : Window
             case VirtualKey.F5:
                 if (InVideo) break; // a slideshow over a still-playing video would double the audio
                 if (ExplorerView.Visibility != Visibility.Visible) StartSlideshow();
-                else if (InRemoteBrowse(_currentFolder))
-                    RefreshRemoteBrowse();   // re-list the owner's vault (adds/deletes/changes), not just the temp dir
                 else LoadCurrentFolder();
                 e.Handled = true; break;
 
@@ -6781,13 +6558,9 @@ public sealed partial class MainWindow : Window
         RefreshVaults();
         ResetVaultIdle();
         StartVaultFlush(); // commit working-folder changes continuously, not only on lock
-        if (v.WorkingDir is { } wd) StartVaultPushWatch(wd); // push re-list signals to active viewers on change
         ShowExplorer();
         NavigateTo(v.WorkingDir);
         StatusText.Text = $"Vault “{v.Name}” unlocked";
-        // Bring sharing online so friends can reach this vault — silently if the identity is already loaded,
-        // otherwise offer to (one passphrase prompt; remembered if declined this session).
-        _ = MaybeBringSharingOnlineAsync();
     }
 
     private async Task CreateVaultDialogAsync(IList<string>? importPaths)
@@ -6941,7 +6714,6 @@ public sealed partial class MainWindow : Window
         var work = _vaults.Current?.WorkingDir;
         StopVaultIdle();
         StopVaultFlush();
-        StopVaultPushWatch();
         try { await _vaults.LockCurrentAsync(); }
         catch (Exception ex)
         {
@@ -6952,7 +6724,6 @@ public sealed partial class MainWindow : Window
             return;
         }
         RefreshVaults();
-        if (_sharing is not null) _ = _sharing.NotifyShareEndedAsync(); // tell anyone browsing that the share is gone
 
         // If we were browsing/viewing inside the vault, leave it (its folder is now wiped).
         if (work is not null && (_currentFolder?.StartsWith(work, StringComparison.OrdinalIgnoreCase) ?? false))
@@ -6967,29 +6738,7 @@ public sealed partial class MainWindow : Window
     {
         var open = _vaults.IsAnyUnlocked;
         VaultLockBtn.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
-        VaultShareBtn.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
         VaultLockText.Text = open && _vaults.Current is not null ? $"Lock “{_vaults.Current.Name}”" : "Lock vault";
-        RefreshNetIndicator();
-    }
-
-    /// <summary>Footer orb: once secure sharing is set up, show whether it's reachable on the relay
-    /// (green = online, red = offline). Visible across the explorer (not just the vault); hidden behind the
-    /// photo/video viewer. A light poll keeps it current as the relay drops/reconnects.</summary>
-    private void RefreshNetIndicator()
-    {
-        // Driven by an always-on 4s timer, so it must never throw (e.g. touching elements during window
-        // teardown) — an unhandled exception here would crash the app.
-        try
-        {
-            var configured = _sharing is not null || SecureSharing.Exists();
-            var show = configured && ExplorerView.Visibility == Visibility.Visible;
-            NetIndicator.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-            if (!show) return;
-            var online = _sharing?.IsOnline == true;
-            NetText.Text = online ? "Online" : "Offline";
-            NetOrb.Fill = online ? _orbOnline : _orbOffline;
-        }
-        catch (Exception ex) { App.Log("NetIndicator", ex); }
     }
 
     // ---- Idle auto-lock ----
@@ -7011,36 +6760,6 @@ public sealed partial class MainWindow : Window
 
     private void StopVaultFlush() { _vaultFlushTimer.Stop(); _vaultFlushDebounce.Stop(); }
 
-    /// <summary>Watch the unlocked vault's working folder so adds/edits/deletes push a "re-list" to any
-    /// friend currently browsing the share (debounced). Flush writes go to the encrypted store, not here,
-    /// so this only fires on genuine content changes.</summary>
-    private void StartVaultPushWatch(string workingDir)
-    {
-        StopVaultPushWatch();
-        try
-        {
-            _vaultPushWatcher = new FileSystemWatcher(workingDir)
-            {
-                IncludeSubdirectories = true,
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
-                EnableRaisingEvents = true,
-            };
-            void Bump() => RootGrid.DispatcherQueue.TryEnqueue(() => { _vaultPushDebounce.Stop(); _vaultPushDebounce.Start(); });
-            _vaultPushWatcher.Created += (_, _) => Bump();
-            _vaultPushWatcher.Deleted += (_, _) => Bump();
-            _vaultPushWatcher.Changed += (_, _) => Bump();
-            _vaultPushWatcher.Renamed += (_, _) => Bump();
-        }
-        catch (Exception ex) { App.Log("VaultPushWatch", ex); }
-    }
-
-    private void StopVaultPushWatch()
-    {
-        _vaultPushDebounce.Stop();
-        try { if (_vaultPushWatcher is not null) { _vaultPushWatcher.EnableRaisingEvents = false; _vaultPushWatcher.Dispose(); } } catch { }
-        _vaultPushWatcher = null;
-    }
-
     /// <summary>Schedule a commit shortly after a working-folder change (coalesces bursts).</summary>
     private void ScheduleVaultFlush() { _vaultFlushDebounce.Stop(); _vaultFlushDebounce.Start(); }
 
@@ -7059,11 +6778,6 @@ public sealed partial class MainWindow : Window
     {
         _vaultIdleTimer.Stop();
         if (!_vaults.IsAnyUnlocked) return;
-        // Don't lock out from under the share. Always defer while a friend is actively browsing (locking would
-        // drop their connection); and when "Don't auto-lock while sharing" is on, defer the whole time the host
-        // is online. Either way it re-checks within one idle period and locks once the condition clears.
-        var online = _sharing?.IsOnline == true;
-        if ((online && _state.NeverLockWhileSharing) || _sharing?.HasActiveViewers == true) { ResetVaultIdle(); return; }
         _ = LockActiveVaultAsync();
     }
 
@@ -7126,9 +6840,7 @@ public sealed partial class MainWindow : Window
         try { _term?.Dispose(); _term = null; } catch { } // kill any terminal shell on close
         try { VideoPlayer.MediaPlayer?.Pause(); } catch { } // don't keep audio playing during a deferred close
         StopFolderWatch();
-        try { CleanupRemoteBrowse(); } catch { }   // securely wipe THIS window's shared-browse copies
         RemoveTray();
-        try { _auditWindow?.Close(); } catch { }   // don't leave a headless audit window keeping the process alive
         _backupTimer.Stop(); _driveWatcher.Stop();
 
         // Everything above is this window's own state. What follows is process-wide, and a guest window
@@ -7136,7 +6848,6 @@ public sealed partial class MainWindow : Window
         // the primary is still running. Wiping the shared temp root or locking the vault here would pull
         // them out from under it.
         if (_secondaryWindow || LaunchedNewWindow()) return;
-        try { WipeShareTempDirs(); } catch { }
         if (!_vaults.IsAnyUnlocked) return;
         args.Cancel = true;                      // defer close until the vault is secured
         try { await _vaults.LockCurrentAsync(); } catch (Exception ex) { App.Log("VaultCloseLock", ex); }

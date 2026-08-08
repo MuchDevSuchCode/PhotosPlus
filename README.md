@@ -7,13 +7,12 @@ A modern, native **Windows Explorer + Photos** alternative — built with **WinU
 Highlights over the stock apps:
 
 1. **🔐 Secure vault** — move folders into an encrypted, Windows-hidden vault (**AES-256-GCM** + **Argon2id**, optional **Windows Hello**), with idle auto-lock, optional self-wipe on repeated wrong passphrases, and encrypted **Google Drive backup**.
-2. **👁 Eye toggle** — a one-click eye icon (shortcut **H**) that instantly **blacks out the photo in the viewer** for privacy, plus an optional **Hidden album** for photos kept out of the gallery.
+2. **👁 Eye toggle** — a one-click eye icon (shortcut **H**) that instantly **blacks out the photo in the viewer** for privacy, plus an optional **Hidden album** for photos kept out of normal browsing.
 3. **▶ Slideshow** — a full-screen, configurable slideshow with adjustable timing, shuffle, loop, and transitions (incl. Ken Burns).
 4. **💻 Developer Mode** — dock a real **cmd / PowerShell / WSL** terminal (ConPTY) beside the explorer, in the current folder.
 5. **🔄 Live, local-first** — folders update in place as files change on disk (no manual refresh), with network-share / WSL pinning and a resizable layout.
-6. **🛰 Secure sharing** — share a vault peer-to-peer with another Galileo user: they browse and view your files live, **end-to-end encrypted**, while the files **never leave your disk** (wallet-style **BIP39** identity, **Ed25519/X25519**, deniable at-rest storage).
 
-> **Status:** working application. The tabbed file explorer (search, sort/group with collapsible sections and **per-folder memory**, cut-move, drag-drop with a **pausable/cancellable progress card**, bulk rename, live updates, drive auto-detect with **capacity bars**, **This PC** grouped into Drives + Folders, **custom Galileo icons** with themed Pictures/Music/Videos folders, pinned network/WSL locations, Windows Hello gate), a **self-contained Recycle Bin** with **secure overwrite delete** (Zero/Random/DoD/Gutmann), an in-app **MTP phone/camera browser** (read + write), photo viewer, gallery, collage, embedded **video + audio player** (album art, multichannel/Atmos), **Spacebar Peek**, **`.zip` archives**, **secure vault** with **Google Drive backup**, an embedded **terminal (Developer Mode)**, an **image editor** (crop, rotate, adjustments, filters, markup, **GPU AI enhance/upscale**), a full **Settings** panel (5 themes and more), and default-photo-app registration are all implemented and building. See **[tasks.md](./tasks.md)** for the roadmap.
+> **Status:** working application. The tabbed file explorer (search, sort/group with collapsible sections and **per-folder memory**, cut-move, drag-drop with a **pausable/cancellable progress card**, bulk rename, live updates, drive auto-detect with **capacity bars**, **This PC** grouped into Drives + Folders, **custom Galileo icons** with themed Pictures/Music/Videos folders, pinned network/WSL locations, Windows Hello gate), a **self-contained Recycle Bin** with **secure overwrite delete** (Zero/Random/DoD/Gutmann), an in-app **MTP phone/camera browser** (read + write), photo viewer, collage, embedded **video + audio player** (album art, multichannel/Atmos), **Spacebar Peek**, **`.zip` archives**, **secure vault** with **Google Drive backup**, an embedded **terminal (Developer Mode)**, an **image editor** (crop, rotate, adjustments, filters, markup, **GPU AI enhance/upscale**), a full **Settings** panel (5 themes and more), and default-photo-app registration are all implemented and building. See **[tasks.md](./tasks.md)** for the roadmap.
 
 ---
 
@@ -68,8 +67,7 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 ## Features (implemented)
 
 **Viewing**
-- Open a **file**, a **folder**, or **drag-and-drop** onto the window (single image → opens in viewer; multiple images → builds a gallery; folder → loads it).
-- Virtualized gallery grid with async thumbnails; favorite (★) and hidden badges.
+- Open a **file**, a **folder**, or **drag-and-drop** onto the window (single image → opens in viewer; multiple images → loads them for viewing/slideshow; folder → loads it).
 - Full-bleed single-image viewer that **scales any photo to fit the window** (up or down), with:
   - **Mouse-wheel zoom** toward the cursor (no modifier), plus +/- buttons and double-tap.
   - **Drag to pan** when zoomed in.
@@ -81,11 +79,11 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 
 **Organize & act** — Favorites (★) with a "Favorites only" filter; per-photo metadata panel (dimensions, size, dates, camera); delete to Recycle Bin; reveal in Explorer.
 
-**Right-click menu** (on the viewer image *and* gallery thumbnails) — Copy (image to clipboard), Copy as file, Copy file path, Open with…, Print…, **Set as desktop background**, **Set as lock screen**, **Set as Thumbnail** (folder preview), Favorite, Hide, Rename…, Show in Explorer, Delete, and the native Windows **Properties** dialog. The explorer's right-click menu on an image offers the same **Set as desktop background / lock screen / Thumbnail** actions.
+**Right-click menu** (on the viewer image) — Copy (image to clipboard), Copy as file, Copy file path, Open with…, Print…, **Set as desktop background**, **Set as lock screen**, **Set as Thumbnail** (folder preview), Favorite, Hide, Rename…, Show in Explorer, Delete, and the native Windows **Properties** dialog. The explorer's right-click menu on an image offers the same **Set as desktop background / lock screen / Thumbnail** actions.
 
 **Collage** — a **Collage** button builds an auto-arranged collage that fills the screen.
 - **Layout presets:** **Justified** (aspect-preserving rows, fit to screen), **Grid** (uniform cropped cells), **Hero** (one big image + the rest justified beside/below).
-- **Choose what's in it:** *Select photos* in the gallery's More menu to hand-pick images, or **drag-and-drop** image files onto an open collage to add them.
+- **Choose what's in it:** built from the current folder's images; **drag-and-drop** image files onto an open collage to add them.
 - **Shuffle** re-arranges to a fresh fit; a **− N +** stepper sets how many photos; **Save** exports to PNG; clicking a tile opens it in the viewer. Re-fits on window resize.
 
 **Video & audio** — an **embedded media player** complements the image viewer. Open a file from the explorer to play **video** (MP4/M4V/MOV/MKV/AVI/WMV/WEBM and more) or **audio** (MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, WMA, AIFF…) natively, with transport controls plus a **volume control** (a speaker icon you click to mute/unmute, with a slider) and a **repeat** toggle. **Spacebar** plays/pauses video, **←/→ step one frame** at a time, and **Ctrl+C copies the current frame** to the clipboard. Videos can **start muted** (Settings → Photos & Videos). Audio shows a "now playing" panel with the track name and, when present, **embedded album art** (toggle in **Settings → Photos & Videos**); a back bar returns to the explorer. Spacebar **Peek** previews media too. Audio/video play in **full multichannel** (5.1/7.1/Atmos) with no forced stereo downmix — enable **Dolby Atmos / DTS:X / Windows Sonic** on your output device and Windows renders the surround/height channels. Click **Edit** in the player to open the **[video editor](#video-editor)** (trim, crop, filters, export).
@@ -97,7 +95,7 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 - **Slideshow** — seconds per photo (2–30 s), shuffle, loop, transition.
 - **Collage** — Default layout (Justified / Grid / Hero).
 - **Privacy** — **Lock Hidden album** (require Windows Hello / PIN before revealing the Hidden album or app-hidden folders).
-- **Secure Vault** — idle auto-lock timeout (5 min … 1 hour, or Never), **Don't auto-lock while sharing**, enroll Windows Hello by default, and **wipe-on-failed-unlocks** (enable + attempt count).
+- **Secure Vault** — idle auto-lock timeout (5 min … 1 hour, or Never), enroll Windows Hello by default, and **wipe-on-failed-unlocks** (enable + attempt count).
 - **Secure Delete** — **Secure-delete when emptying the Recycle Bin** (off by default), and the **Overwrite method** (Zero (1) / Random (1) / DoD 5220.22-M (3) / DoD ECE (7) / Gutmann (35)) used by shred, Shift+Delete, and (when enabled) emptying the bin. Right-click → Secure delete always overwrites.
 - **Backup** — **Sign in with Google** for encrypted Google Drive vault backup (shows the connected account), back up now / restore, and **Automatic backup** (Off / Daily / Weekly) that backs up all vaults on a schedule while Galileo is open and signed in.
 - **Developer** — **Developer Mode**: show the embedded terminal pane (cmd / PowerShell / WSL) beside the explorer.
@@ -108,7 +106,7 @@ The panel has **Save / Cancel** buttons, so live edits only persist when you cli
 
 #### 1. Eye toggle — hide / un-hide the current photo
 - **Black-out (default):** the eye icon (or **H**) instantly covers the current photo with a solid black curtain — a glance over your shoulder reveals nothing. Press again to reveal. The image is never moved or deleted.
-- **Hidden album (persistent):** the eye button's flyout → *Hide permanently* flags the photo so it's excluded from the gallery and slideshows, and collected into a **Hidden album** (toggle *Show Hidden album* in the gallery's More menu).
+- **Hidden album (persistent):** the eye button's flyout → *Hide permanently* flags the photo so it's excluded from browsing and slideshows; opening a hidden photo directly switches the viewer into the Hidden album (Windows Hello-gated when **Lock Hidden album** is on).
 - Hidden/favorite state is stored as JSON in `%LocalAppData%\Galileo`, never by altering originals.
 
 #### 2. Slideshow
@@ -125,8 +123,8 @@ The panel has **Save / Cancel** buttons, so live edits only persist when you cli
 
 - **Mica** backdrop and **extended title bar** for a seamless Win11 look — no chunky command bar.
 - **Segoe Fluent Icons** throughout for crisp, native Win11 glyphs.
-- **Floating, auto-hiding controls:** a translucent pill toolbar in the gallery; back / actions / nav-zoom pills in the viewer that fade out after a few seconds of inactivity.
-- **Motion:** a settings fade/scale entrance and a gallery→viewer connected animation.
+- **Floating, auto-hiding controls:** back / actions / nav-zoom pills in the viewer that fade out after a few seconds of inactivity.
+- **Motion:** a settings fade/scale entrance.
 - Rounded thumbnails, illustrated empty-states, dark/light/custom-theme aware.
 - **Smooth under load:** thumbnail/icon decoding is throttled so fast-scrolling a folder of hundreds of media files stays fluid (and never overruns the render pipeline).
 
@@ -137,7 +135,7 @@ The panel has **Save / Cancel** buttons, so live edits only persist when you cli
 Galileo stays responsive on huge folders (thousands of files) and on slow external drives. Three things make that work:
 
 - **Opening a photo opens a photo.** A window launched to view a single image shows it immediately — it does not build the file manager, enumerate the containing folder, or generate thumbnails for its neighbours. The rest of the folder is pulled in afterwards, off-thread and paths-only, so arrow-key/swipe navigation still works without holding up the image you asked for. The file manager is built lazily, only if you navigate to it. (This matters because WinUI runs every window in a process on one UI thread — without it, opening a third photo from an 837-file folder stalled the whole app for 16 seconds.)
-- **Thumbnails come from the shell, off-thread.** Galileo uses `IShellItemImageFactory` — the same API Explorer itself uses — instead of `StorageFile.GetThumbnailAsync` + `BitmapImage`. The WinRT route allocates COM objects that the finalizer must marshal back to the UI thread to release, so a gallery of a few hundred photos deadlocks the finalizer, the GC and the UI thread against each other.
+- **Thumbnails come from the shell, off-thread.** Galileo uses `IShellItemImageFactory` — the same API Explorer itself uses — instead of `StorageFile.GetThumbnailAsync` + `BitmapImage`. The WinRT route allocates COM objects that the finalizer must marshal back to the UI thread to release, so a folder of a few hundred photos deadlocks the finalizer, the GC and the UI thread against each other.
 - **No Large Object Heap churn.** The shell returns a ~256 KB thumbnail, well over the 85,000-byte LOH threshold, so allocating one per file drove a gen2 collection storm (and every gen2 collection suspends the UI thread). Those buffers are pooled: a 59-image folder went from 8.2 MB allocated and 2 gen2 collections to **zero of both**.
 - **Image dimensions are read from the file header**, not via WinRT image properties — 0.04 ms per file with no COM objects.
 
@@ -161,7 +159,7 @@ Galileo/
 │  └─ Galileo.App/          # WinUI 3 app (single project; builds Galileo.exe)
 │     ├─ Program.cs            # custom Main (single-instance redirection before XAML init)
 │     ├─ App.xaml(.cs)         # app + shared resources (GlyphButton, PillBrush, explorer templates)
-│     ├─ MainWindow.xaml(.cs)  # explorer + tabs + gallery + viewer + video + collage + settings + title bar
+│     ├─ MainWindow.xaml(.cs)  # explorer + tabs + viewer + video + collage + settings + title bar
 │     ├─ SlideshowWindow.xaml(.cs)
 │     ├─ Models/               # PhotoItem, ExplorerItem, ExplorerGroup (collapsible), VaultInfo
 │     ├─ Services/             # AppState, PhotoLibrary, FileSystemService,
@@ -281,34 +279,14 @@ Galileo can store folders in an encrypted **vault** that is hidden from Windows 
 - **Send to Vault** — while a vault is unlocked, right-click any file/folder in clear space → **Send to Vault**. Each item is encrypted into the open vault immediately and the original is securely wiped from clear space.
 - **Hidden from Windows** — vault contents live as opaque, random-named encrypted blobs under `%LocalAppData%\Galileo\Vaults\<id>` with an encrypted index. There is no readable folder, filename, or content in Explorer.
 - **Encryption** — each file is encrypted with **AES-256-GCM** (chunked, so multi-GB videos stream). The data key is wrapped by a key derived from your passphrase with **Argon2id**, and (optionally) by a **Windows Hello / TPM** keyslot. Either factor unlocks the same vault; **the passphrase is the only recovery key — there is no reset.**
-- **Full app while unlocked** — unlocking decrypts the vault into a working folder under your user profile, so the explorer, viewer, video player, gallery, slideshow, and collage all work exactly as they do for any folder. Add files with **Send to Vault**, or by copying/pasting/dragging them in while unlocked.
-- **Auto-lock** — an unlocked vault re-locks (re-encrypts changes and securely wipes the working folder) when you click **Lock** (or right-click the vault → **Lock**), after an idle timeout, or when you close Galileo. Pick the idle timeout in **Settings → Secure vault → Auto-lock when idle** (5 / 10 / 15 / 30 minutes, 1 hour, or Never). The idle timer never fires while a friend is actively browsing your share, and **Don't auto-lock while sharing** keeps the vault open the entire time secure sharing is online (it locks again once you go offline). With **Run in the background** on, closing the window keeps hosting your shares from the tray — the vault stays unlocked and serving.
+- **Full app while unlocked** — unlocking decrypts the vault into a working folder under your user profile, so the explorer, viewer, video player, slideshow, and collage all work exactly as they do for any folder. Add files with **Send to Vault**, or by copying/pasting/dragging them in while unlocked.
+- **Auto-lock** — an unlocked vault re-locks (re-encrypts changes and securely wipes the working folder) when you click **Lock** (or right-click the vault → **Lock**), after an idle timeout, or when you close Galileo. Pick the idle timeout in **Settings → Secure vault → Auto-lock when idle** (5 / 10 / 15 / 30 minutes, 1 hour, or Never).
 - **Wipe on failed unlocks** — optionally (**Settings → Secure vault**) **permanently destroy** a vault after a configurable number of wrong passphrases. This is irreversible; the attempt counter persists across restarts and resets on a successful unlock.
 - **Windows Hello** — when enrolled, the unlock dialog offers a **Windows Hello** button; the passphrase always works as a fallback.
 - **Rename / Lock** — right-click a vault in the sidebar → **Rename…** (display name only; works locked or unlocked) or **Lock** (re-encrypts and hides it).
 - **Cloud backup (Google Drive)** — **Sign in with Google** in **Settings → Backup** (or right-click a vault → **Back up to Google Drive**) to copy your vaults off-device; the signed-in account is shown and you stay signed in across launches. Only the **encrypted blobs (obfuscated names)**, the encrypted index, and a **name-stripped manifest** are uploaded — the key never leaves your device, so Google can't read your vaults. **Restore from Drive…** re-downloads a vault; unlock it with your passphrase as usual. **Scheduled backups** (Settings → Backup → Automatic backup: Daily / Weekly) run automatically while the app is open and signed in — backing up on launch (and periodically) once a backup is overdue. Uses the minimal `drive.file` scope (the app only ever sees files it created). Clicking **Sign in with Google** launches your browser for the standard OAuth consent flow. Galileo ships a *Desktop app* OAuth client as a **gitignored `Assets\google-oauth.json`** bundled into the build (so the secret never lands in source control), with a per-user override at `%LocalAppData%\Galileo\google-oauth.json` that takes precedence. The OAuth project must have the **Drive API enabled** and its consent screen **published to Production** for arbitrary accounts to sign in.
 
 > **Security notes.** While unlocked, decrypted files exist in a working folder under `%LocalAppData%\Galileo\.work` (restricted to your Windows account); it is securely wiped on lock, and any copy left by a crash is wiped at the next launch. Secure deletion is overwrite-then-delete, which is **best-effort on SSDs** (wear-levelling/TRIM may retain remnants) and not a forensic guarantee. Windows may also cache thumbnails for files opened while unlocked. For **Google Drive backup**, only encrypted/obfuscated files and a name-stripped manifest are uploaded (Google sees the vault's random id and file sizes, never contents); the OAuth refresh token is stored under `%LocalAppData%\Galileo\gdrive-token`.
-
----
-
-## Secure sharing (peer-to-peer)
-
-Share a vault with another Galileo user **without the files ever leaving your disk**. A remote peer can list and view your vault's contents live over an encrypted connection; the bytes stream to them on demand and are never uploaded or stored anywhere central.
-
-- **Wallet-style identity** — your identity is derived from a **BIP39 recovery phrase** (like a crypto wallet): an **Ed25519** signing key (who you are) and an **X25519** key-agreement key (for end-to-end encryption), plus a stable **ID (UUID)** to share and a short **safety number (fingerprint)** to verify out-of-band. You also pick a **display name (alias)** friends will see. Back up the phrase once and you can recover the same identity elsewhere. Set it up in **Settings → Secure sharing → Manage secure sharing…**, protected by a local passphrase.
-- **Friend list (mutual)** — send a **friend request** by ID; the other person **accepts**, and you're linked. Linking is symmetric: once linked you each see the other's alias, and **either of you can share or revoke any vault** with the other. **Unfriend** (either side) is immediate and drops all shares both ways. Requests reach friends even when they're offline (the relay queues them, end-to-end encrypted, until they next connect).
-- **Per-vault sharing** — inside an unlocked vault, click the **Share** icon in the command bar and pick **each friend's access**: **No access**, **Read only** (browse / view / download), or **Read & write**. Revoking takes effect live. Once secure sharing is set up, a small **Online / Offline** indicator (green / red orb) sits in the explorer footer and shows whether you're reachable on the relay to serve shares.
-- **Read & write** — a friend granted write access can **add files and folders into your vault** (drag-drop or paste to upload, New folder, delete) from their normal file manager while browsing your share. Uploads land in your unlocked vault's working folder, get encrypted into the vault like anything else, and appear live for other viewers. The owner is always the authority: every write is checked against the grant on the host and paths are validated so a peer can never write outside the vault; read-only friends are refused. A viewer's favorites, creates, uploads and deletes all show in the owner's access log.
-- **Browse with Ctrl+Alt+V** — press **Ctrl+Alt+V**, enter **your sharing passphrase**, pick a friend's shared vault, and it opens in the **normal file manager** — thumbnails, gallery, viewer, video player, all the usual behavior. Files stream into a temporary read-only copy as you browse (wiped on the next browse / next launch); nothing else is written.
-- **Live updates** — while you're browsing a friend's share, the owner's adds, edits and deletes appear automatically. The owner **pushes** a re-list signal the moment their vault changes (so it's near-instant), and a periodic background poll is kept as a fallback. Press **F5** to force a refresh anytime.
-- **Idle auto-disconnect** — optionally have a shared-vault browse **disconnect itself** after a period of no activity (**Settings → Secure sharing → Disconnect when idle**: 5 / 15 / 30 minutes or 1 hour; off by default). On timeout it signals the owner, leaves the share, and securely wipes the downloaded temp copies — so an unattended session doesn't stay connected.
-- **End-to-end encrypted** — each connection runs a mutually-authenticated handshake (ephemeral **X25519** for forward secrecy, mixed with your static identity keys, each side signing with **Ed25519**) and derives per-session **AES-256-GCM** keys with a session id so repeat connections never collide. Every byte — the file list and the contents — is encrypted **between the two Galileo apps**; the relay only ever sees ciphertext.
-- **Files stay home** — the host reads from its own unlocked working folder and streams **re-encrypted chunks**; nothing is copied to the relay or persisted server-side. Browsing works only **while the owner is online and that vault is unlocked**.
-- **Run in the background** — to keep hosting without leaving a window open, enable **Settings → Background → Run in the background** (closing the window hides Galileo to the **system tray**; quit from the tray icon) and optionally **Start with Windows** (launches minimized to the tray at sign-in). The connection keeps itself alive with a keepalive ping and auto-reconnects after drops. (It's a tray app, not a Windows Service — a service runs in session 0 with no desktop and can't show a window/tray or run WinUI.)
-- **Relay server** — a small **Python (FastAPI)** rendezvous + relay lives in [`server/`](server/). It does discovery (ID ↔ public keys) and relays the opaque end-to-end envelopes between online peers. It **stores no files and never sees plaintext**. Point Galileo at your relay in **Settings → Secure sharing → Relay server** (`wss://…`). Deploy it with [`server/deploy.sh`](server/deploy.sh) (Lightsail/Ubuntu: systemd service + nginx TLS reverse proxy).
-
-> **Security notes.** Storage is **deniable at rest**: your identity, alias, friends and grants are sealed into a single opaque, label-less blob with a generic filename (`%LocalAppData%\Galileo\store.dat`) — nothing on disk hints that secure sharing is configured. To *view* a remote file the viewer necessarily holds its plaintext in memory and writes a temporary copy under `%TEMP%\GalileoShare` to open it; that copy is best-effort cleanup only. The relay can't read your files, but it can see *that* two IDs communicate and the size/timing of traffic — run it behind **TLS (wss://)** to hide that metadata from the network.
 
 ---
 
@@ -408,7 +386,7 @@ Turn on **Settings → Developer → Developer Mode** to dock a real **terminal 
 | `Enter` | Open selected item (explorer) |
 | `Space` | **Peek** — preview the selected file (explorer) |
 | `←` `→` `↑` `↓` | Step to prev / next file while peeking |
-| `F5` | Refresh folder (explorer) · **start slideshow** (viewer/gallery) |
+| `F5` | Refresh folder (explorer) · **start slideshow** (viewer) |
 | `Ctrl`+`Alt`+`V` | **Open a vault**, or **browse vaults friends share with you** (the entry point when the vault is hidden) |
 | `Space` | Slideshow play / pause (slideshow) |
 | `←` `→` `↑` `↓` | (in slideshow) prev / next / speed |

@@ -231,13 +231,6 @@
                             <TextBlock Text="Collage" />
                         </StackPanel>
                     </Button>
-                    <Button x:Name="VaultShareBtn" Visibility="Collapsed" Click="VaultShare_Click"
-                            ToolTipService.ToolTip="Share this vault with chosen friends">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <FontIcon Glyph="&#xE72D;" FontFamily="Segoe Fluent Icons" FontSize="14" />
-                            <TextBlock Text="Share" />
-                        </StackPanel>
-                    </Button>
                     <Button x:Name="VaultLockBtn" Visibility="Collapsed" Click="VaultLock_Click"
                             ToolTipService.ToolTip="Lock the open vault (re-encrypts and hides it)">
                         <StackPanel Orientation="Horizontal" Spacing="6">
@@ -479,102 +472,6 @@
                 </Grid>
                 <WebView2 x:Name="TerminalWeb" Grid.Row="1" />
             </Grid>
-        </Grid>
-
-        <!-- ===================== Gallery ===================== -->
-        <Grid x:Name="GalleryView" Visibility="Collapsed">
-            <GridView x:Name="PhotoGrid"
-                      Padding="24,56,24,32"
-                      SelectionMode="None"
-                      IsItemClickEnabled="True"
-                      ItemClick="PhotoGrid_ItemClick"
-                      SelectionChanged="PhotoGrid_SelectionChanged"
-                      RightTapped="PhotoGrid_RightTapped"
-                      ContainerContentChanging="PhotoGrid_ContainerContentChanging">
-                <GridView.ItemTemplate>
-                    <DataTemplate>
-                        <Grid Width="196" Height="196" Margin="5"
-                              CornerRadius="10" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
-                            <Image x:Name="PhotoThumb" Source="{Binding Thumbnail}" Stretch="UniformToFill" />
-                            <Border Background="#B0000000" VerticalAlignment="Bottom" Padding="8,4">
-                                <TextBlock Text="{Binding FileName}" FontSize="11"
-                                           TextTrimming="CharacterEllipsis" Foreground="White" />
-                            </Border>
-                            <FontIcon Glyph="&#xE735;" FontFamily="Segoe Fluent Icons"
-                                      Foreground="Gold" FontSize="16"
-                                      HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10"
-                                      Visibility="{Binding FavoriteVisibility}" />
-                            <Border Background="#CC000000" CornerRadius="10"
-                                    Visibility="{Binding HiddenVisibility}">
-                                <FontIcon Glyph="&#xED1A;" FontFamily="Segoe Fluent Icons"
-                                          Foreground="White" FontSize="28"
-                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
-                            </Border>
-                        </Grid>
-                    </DataTemplate>
-                </GridView.ItemTemplate>
-            </GridView>
-
-            <!-- Empty state -->
-            <StackPanel x:Name="EmptyState" Visibility="Visible"
-                        HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="14" MaxWidth="420">
-                <FontIcon Glyph="&#xEB9F;" FontFamily="Segoe Fluent Icons" FontSize="56" Opacity="0.45" />
-                <TextBlock Text="Your photos, beautifully" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                <TextBlock Text="Open a file or folder, or drag photos anywhere onto this window."
-                           Opacity="0.7" FontSize="14" TextWrapping="Wrap" TextAlignment="Center" />
-                <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" Margin="0,4,0,0">
-                    <Button Content="Open file" Click="OpenFile_Click" Style="{StaticResource AccentButtonStyle}" />
-                    <Button Content="Open folder" Click="OpenFolder_Click" />
-                </StackPanel>
-            </StackPanel>
-
-            <!-- Floating gallery toolbar -->
-            <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,48,16,0"
-                    CornerRadius="24" Padding="4" Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}"
-                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                <StackPanel Orientation="Horizontal" Spacing="2">
-                    <Button x:Name="OpenButton" Style="{StaticResource GlyphButton}"
-                            ToolTipService.ToolTip="Open" AutomationProperties.Name="Open">
-                        <FontIcon Glyph="&#xE8E5;" FontFamily="Segoe Fluent Icons" />
-                        <Button.Flyout>
-                            <MenuFlyout>
-                                <MenuFlyoutItem Text="Open file…" Click="OpenFile_Click">
-                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E5;" FontFamily="Segoe Fluent Icons" /></MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                                <MenuFlyoutItem Text="Open folder…" Click="OpenFolder_Click">
-                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE838;" FontFamily="Segoe Fluent Icons" /></MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                            </MenuFlyout>
-                        </Button.Flyout>
-                    </Button>
-                    <Button Style="{StaticResource GlyphButton}" Click="Slideshow_Click"
-                            ToolTipService.ToolTip="Slideshow (F5)" AutomationProperties.Name="Slideshow">
-                        <FontIcon Glyph="&#xE786;" FontFamily="Segoe Fluent Icons" />
-                    </Button>
-                    <Button Style="{StaticResource GlyphButton}" Click="Collage_Click"
-                            ToolTipService.ToolTip="Collage" AutomationProperties.Name="Collage">
-                        <FontIcon Glyph="&#xE8A9;" FontFamily="Segoe Fluent Icons" />
-                    </Button>
-                    <Button Style="{StaticResource GlyphButton}" Click="Settings_Click"
-                            ToolTipService.ToolTip="Settings" AutomationProperties.Name="Settings">
-                        <FontIcon Glyph="&#xE713;" FontFamily="Segoe Fluent Icons" />
-                    </Button>
-                    <Button Style="{StaticResource GlyphButton}" ToolTipService.ToolTip="More" AutomationProperties.Name="More">
-                        <FontIcon Glyph="&#xE712;" FontFamily="Segoe Fluent Icons" />
-                        <Button.Flyout>
-                            <MenuFlyout>
-                                <ToggleMenuFlyoutItem x:Name="SelectModeButton" Text="Select photos" Click="SelectMode_Click" />
-                                <ToggleMenuFlyoutItem x:Name="HiddenAlbumButton" Text="Show Hidden album" Click="HiddenAlbum_Click" />
-                                <ToggleMenuFlyoutItem x:Name="FavoritesFilterButton" Text="Favorites only" Click="FavoritesFilter_Click" />
-                                <MenuFlyoutSeparator />
-                                <MenuFlyoutItem Text="Close gallery" Click="CloseGallery_Click">
-                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8BB;" FontFamily="Segoe Fluent Icons" /></MenuFlyoutItem.Icon>
-                                </MenuFlyoutItem>
-                            </MenuFlyout>
-                        </Button.Flyout>
-                    </Button>
-                </StackPanel>
-            </Border>
         </Grid>
 
         <!-- ===================== Viewer ===================== -->
@@ -859,7 +756,7 @@
                 <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,48,0,0"
                         CornerRadius="22" Padding="4" Background="{StaticResource PillBrush}">
                     <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="BackToGallery_Click"
-                            ToolTipService.ToolTip="Back to gallery (Esc)" AutomationProperties.Name="Back to gallery">
+                            ToolTipService.ToolTip="Back to files (Esc)" AutomationProperties.Name="Back to files">
                         <FontIcon Glyph="&#xE72B;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                 </Border>
@@ -1211,7 +1108,7 @@
                     CornerRadius="26" Padding="6" Background="{StaticResource PillBrush}">
                 <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
                     <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="CollageBack_Click"
-                            ToolTipService.ToolTip="Back to gallery (Esc)" AutomationProperties.Name="Back to gallery">
+                            ToolTipService.ToolTip="Back to files (Esc)" AutomationProperties.Name="Back to files">
                         <FontIcon Glyph="&#xE72B;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                     <Border Width="1" Margin="6,8" Background="#33FFFFFF" />
@@ -1250,14 +1147,6 @@
                 </StackPanel>
             </Border>
         </Grid>
-
-        <!-- Secure-sharing reachability in the explorer footer (green = online, red = offline). Placed before
-             the overlays below so the viewer / settings render over it. -->
-        <StackPanel x:Name="NetIndicator" Visibility="Collapsed" Orientation="Horizontal" Spacing="7"
-                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,16,8" IsHitTestVisible="False">
-            <Ellipse x:Name="NetOrb" Width="9" Height="9" VerticalAlignment="Center" Fill="Gray" />
-            <TextBlock x:Name="NetText" Text="Offline" FontSize="12" Opacity="0.7" VerticalAlignment="Center" />
-        </StackPanel>
 
         <!-- ===================== Settings overlay ===================== -->
         <Grid x:Name="SettingsOverlay" Visibility="Collapsed" Background="#AA000000"
@@ -1546,14 +1435,6 @@
                                         </Grid>
                                         <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
                                             <StackPanel VerticalAlignment="Center">
-                                                <TextBlock Text="Don't auto-lock while sharing" />
-                                                <TextBlock Text="Keep the vault unlocked the whole time secure sharing is online, so friends can keep browsing. It still locks once you stop sharing."
-                                                           Style="{StaticResource SettingDesc}" />
-                                            </StackPanel>
-                                            <ToggleSwitch Grid.Column="1" x:Name="NeverLockWhileSharingSwitch" Toggled="NeverLockWhileSharingSwitch_Toggled" />
-                                        </Grid>
-                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
-                                            <StackPanel VerticalAlignment="Center">
                                                 <TextBlock Text="Default to Windows Hello" />
                                                 <TextBlock Text="Pre-check &quot;Also unlock with Windows Hello&quot; when creating a vault."
                                                            Style="{StaticResource SettingDesc}" />
@@ -1658,37 +1539,6 @@
                             </StackPanel>
 
                             <!-- Secure sharing -->
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="SECURE SHARING" Style="{StaticResource SettingSectionHeader}" />
-                                <Border Style="{StaticResource SettingCard}">
-                                    <StackPanel Spacing="16">
-                                        <StackPanel Spacing="6">
-                                            <TextBlock Text="Relay server" />
-                                            <TextBox x:Name="RelayUrlBox" PlaceholderText="wss://your-relay.example.com"
-                                                     TextChanged="RelayUrlBox_TextChanged" />
-                                            <TextBlock Text="Address of the rendezvous relay. Files are end-to-end encrypted and never stored on it."
-                                                       Style="{StaticResource SettingDesc}" />
-                                        </StackPanel>
-                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
-                                            <StackPanel VerticalAlignment="Center">
-                                                <TextBlock Text="Disconnect when idle" />
-                                                <TextBlock Text="While browsing a friend's shared vault, automatically disconnect after this long with no activity."
-                                                           Style="{StaticResource SettingDesc}" />
-                                            </StackPanel>
-                                            <ComboBox Grid.Column="1" x:Name="RemoteIdleCombo" Style="{StaticResource SettingControl}"
-                                                      SelectionChanged="RemoteIdleCombo_SelectionChanged">
-                                                <ComboBoxItem Content="5 minutes" />
-                                                <ComboBoxItem Content="15 minutes" />
-                                                <ComboBoxItem Content="30 minutes" />
-                                                <ComboBoxItem Content="1 hour" />
-                                                <ComboBoxItem Content="Never" />
-                                            </ComboBox>
-                                        </Grid>
-                                        <Button x:Name="ManageSharingBtn" Content="Manage secure sharing…" Click="ManageSharing_Click" />
-                                    </StackPanel>
-                                </Border>
-                            </StackPanel>
-
                             <!-- Background -->
                             <StackPanel Spacing="8">
                                 <TextBlock Text="BACKGROUND" Style="{StaticResource SettingSectionHeader}" />

@@ -1,7 +1,9 @@
 # Polish review — 2026-08-08 (reviewed at `034e0bc`; burn-down completed same day)
 
-**Status: 73 of 77 fixed.** Open: UI-5 (dead gallery — needs a product decision), P2-28 (won't fix — user
-setting), P3-3 (deferred cosmetic), and the deferred halves of P1-27 (see its note).
+**Status: 74 of 77 fixed.** Open: P2-28 (won't fix — user setting), P3-3 (deferred cosmetic), and the
+deferred halves of P1-27 (see its note). UI-5 resolved by deleting the gallery. NOTE: the secure-sharing
+feature was subsequently removed entirely, mooting the sharing-related findings (P0-3, P2-13, P2-15 were
+fixed first, then the whole subsystem was deleted).
 
 Full functional + UI review. Five parallel review passes (explorer/file management, viewer/media/multi-window,
 editor/AI, vault/sharing/security, UI/XAML); every finding below was verified against the code, and the
@@ -241,12 +243,9 @@ and a fix sketch. Legend: `[ ]` open · `[~]` in progress · `[x]` fixed.
   are unnamed (tooltips don't feed UIA Name). Screen-reader users can't use the app.
   *Fix:* `AutomationProperties.Name` mirroring tooltips; `Header=` on labelled sliders.
 
-- [ ] **UI-5 `GalleryView` is dead UI.** `ShowGallery()` has no callers; Close-gallery's `EmptyState` line is a
-  no-op; Select-mode/collage-from-selection are unreachable. Decide: delete it or give it an entry point.
-  (Note: this moots the "editor exits to the wrong view when entered from the gallery" scenario — the only
-  gallery entry to the editor is unreachable today.)
-  **DEFERRED — needs a product decision** (delete the gallery, or give it an entry point). It's dead but
-  harmless; removal touches connected animations and collage selection plumbing.
+- [x] **UI-5 `GalleryView` is dead UI.** RESOLVED by removal: the user chose to delete it. GalleryView,
+  PhotoGrid, the gallery toolbar (select mode / hidden-album / favorites toggles), EmptyState, and the
+  connected animation are gone; collage now always samples the current folder's images.
 
 - [x] **UI-6 Explorer command strip drops commands at ordinary widths** — single non-wrapping StackPanel row;
   the `*` column (New folder/Slideshow/Collage/Share/Lock) collapses to zero first; no window MinWidth.

@@ -108,14 +108,11 @@ public sealed class AppState
     /// signed in to Google Drive (it backs up on launch/while running once a backup is overdue).</summary>
     public string BackupSchedule { get; set; } = "Off";
 
-    /// <summary>Relay server URL for secure peer-to-peer sharing (ws:// or wss://). Empty = not configured.</summary>
-    public string SecureRelayUrl { get; set; } = "wss://relay.exploits.sh";
-
-    /// <summary>Keep Galileo running in the system tray when its window is closed (so secure sharing stays
-    /// online to serve friends). The window is hidden, not exited; quit from the tray menu.</summary>
+    /// <summary>Keep Galileo running in the system tray when its window is closed. The window is
+    /// hidden, not exited; quit from the tray menu.</summary>
     public bool RunInBackground { get; set; }
 
-    /// <summary>Launch Galileo at sign-in (minimized to the tray) so it can host shares in the background.</summary>
+    /// <summary>Launch Galileo at sign-in (minimized to the tray).</summary>
     public bool StartWithWindows { get; set; }
 
     // Developer mode (embedded terminal)
@@ -136,14 +133,6 @@ public sealed class AppState
     /// <summary>Re-hide app-hidden folders whenever Galileo loses focus / goes to the background; reveal them
     /// again with the Show app-hidden toggle. Off by default.</summary>
     public bool HideOnBackground { get; set; }
-
-    /// <summary>When browsing a friend's shared vault, auto-disconnect after this many minutes with no
-    /// interaction (0 = never). Off by default.</summary>
-    public int RemoteIdleDisconnectMinutes { get; set; }
-
-    /// <summary>Host (side A): keep the vault unlocked the whole time secure sharing is online, suppressing
-    /// the idle auto-lock so friends can keep browsing. It still locks once sharing goes offline. Off by default.</summary>
-    public bool NeverLockWhileSharing { get; set; }
 
     // Slideshow settings
     public int SlideshowSeconds { get; set; } = 4;
@@ -348,10 +337,7 @@ public sealed class AppState
         SecureDeleteOnEmpty = o.SecureDeleteOnEmpty;
         ConvertRemovesOriginal = o.ConvertRemovesOriginal;
         HideOnBackground = o.HideOnBackground;
-        RemoteIdleDisconnectMinutes = o.RemoteIdleDisconnectMinutes;
-        NeverLockWhileSharing = o.NeverLockWhileSharing;
         BackupSchedule = o.BackupSchedule;
-        SecureRelayUrl = o.SecureRelayUrl;
         RunInBackground = o.RunInBackground;
         StartWithWindows = o.StartWithWindows;
     }
