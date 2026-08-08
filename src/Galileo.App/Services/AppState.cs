@@ -153,8 +153,11 @@ public sealed class AppState
 
     /// <summary>When true, <see cref="Save"/> is a no-op — used while the Settings dialog is open so
     /// live edits don't persist until the user clicks Save.</summary>
-    [JsonIgnore]
+    [JsonIgnore] // runtime-only flag — serializing it would also make settings-dirty fingerprints lie
     public bool SuppressSave { get; set; }
+
+    /// <summary>Serialized snapshot for change detection (e.g. "does Settings have unsaved edits?").</summary>
+    public string Fingerprint() => JsonSerializer.Serialize(this, Options);
 
     [JsonIgnore]
     private static string StatePath
@@ -212,6 +215,19 @@ public sealed class AppState
                     state.HiddenFolders = new HashSet<string>(state.HiddenFolders ?? new(), StringComparer.OrdinalIgnoreCase);
                     state.FolderThumbnails = new Dictionary<string, string>(state.FolderThumbnails ?? new(), StringComparer.OrdinalIgnoreCase);
                     state.FolderSorts = new Dictionary<string, FolderSortPref>(state.FolderSorts ?? new(), StringComparer.OrdinalIgnoreCase);
+                    // Prune per-folder prefs for folders that are really gone (the map otherwise grows
+                    // forever) — but never for UNC/offline volumes, which are merely unreachable now.
+                    foreach (var k in state.FolderSorts.Keys.ToList())
+                    {
+                        try
+                        {
+                            var root = Path.GetPathRoot(k);
+                            if (!string.IsNullOrEmpty(root) && !k.StartsWith(@"\\", StringComparison.Ordinal)
+                                && Directory.Exists(root) && !Directory.Exists(k))
+                                state.FolderSorts.Remove(k);
+                        }
+                        catch { /* leave the entry */ }
+                    }
                     return state;
                 }
             }

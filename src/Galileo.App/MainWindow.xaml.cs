@@ -101,6 +101,14 @@ public sealed partial class MainWindow : Window
 
     // Secure vault state.
     private readonly VaultManager _vaults = App.Vaults; // process-wide — see App.Vaults
+
+    // Live sort/group of THIS window. Deliberately window-local: _state.SortBy is process-wide and
+    // shared by every window, so using it as the live value let one window's navigation rewrite
+    // another's sort (and poison its next per-folder save). _state.* keeps only the last-used
+    // default that seeds new windows and folders without a remembered pref.
+    private string _sortBy = App.State.SortBy;
+    private bool _sortDescending = App.State.SortDescending;
+    private string _groupBy = App.State.GroupBy;
     private readonly GoogleDriveBackup _drive = new();
 
     // Scheduled vault backups: a periodic check runs a backup when one is overdue (see AppState.BackupSchedule).
@@ -197,12 +205,16 @@ public sealed partial class MainWindow : Window
         // A photo window ("open in new window") re-opens at its last position/size — e.g. the monitor
         // the user dragged the previous one to. Validated against the current displays so a spot saved
         // on a since-unplugged monitor snaps to the nearest one instead of opening off-screen.
-        if (_secondaryWindow && _state.PhotoWinW > 0 && _state.PhotoWinH > 0)
+        if ((_secondaryWindow || LaunchedNewWindow()) && _state.PhotoWinW > 0 && _state.PhotoWinH > 0)
         {
             try
             {
                 var rect = new Windows.Graphics.RectInt32(_state.PhotoWinX, _state.PhotoWinY, _state.PhotoWinW, _state.PhotoWinH);
                 var area = DisplayArea.GetFromRect(rect, DisplayAreaFallback.Nearest).WorkArea;
+                // Size first: a rect remembered on a 4K monitor restored onto a laptop panel must
+                // shrink, or the caption buttons land off-screen and the window can't be closed.
+                rect.Width = Math.Min(rect.Width, area.Width);
+                rect.Height = Math.Min(rect.Height, area.Height);
                 rect.X = Math.Clamp(rect.X, area.X, Math.Max(area.X, area.X + area.Width - rect.Width));
                 rect.Y = Math.Clamp(rect.Y, area.Y, Math.Max(area.Y, area.Y + area.Height - rect.Height));
                 _appWindow.MoveAndResize(rect);
@@ -228,6 +240,15 @@ public sealed partial class MainWindow : Window
             _chromeTimer.Stop();
             ViewerChrome.Opacity = 0;
             ViewerChrome.IsHitTestVisible = false;
+            // Invisible controls must leave the TAB ORDER too — Opacity=0 alone left keyboard users
+            // walking 15 transparent buttons with no visible focus.
+            ViewerChrome.Visibility = Visibility.Collapsed;
+            if (InVideo)
+            {
+                // The video pills fade with the same timer instead of sitting over the frame forever.
+                VideoBackBar.Visibility = Visibility.Collapsed;
+                VideoControlsBar.Visibility = Visibility.Collapsed;
+            }
         };
 
         // File explorer is the home view.
@@ -255,6 +276,24 @@ public sealed partial class MainWindow : Window
             if (_sharing?.HasActiveViewers == true) _ = _sharing.NotifyVaultChangedAsync();
         };
         _volSaveDebounce.Tick += (_, _) => { _volSaveDebounce.Stop(); _state.Save(); };
+
+        // A drag that leaves without dropping must not poison the NEXT drag's move/copy decision.
+        ExplorerIconsView.DragLeave += (_, _) => ResetDragSource();
+        ExplorerDetailsList.DragLeave += (_, _) => ResetDragSource();
+
+        RootGrid.SizeChanged += RootGrid_SizeChanged; // keep the Settings card inside a shrinking window
+        // Overlays trap Tab inside their card (their scrims only LOOK modal).
+        SettingsCard.TabFocusNavigation = Microsoft.UI.Xaml.Input.KeyboardNavigationMode.Cycle;
+        PeekCard.TabFocusNavigation = Microsoft.UI.Xaml.Input.KeyboardNavigationMode.Cycle;
+
+        // Hovering a chrome control must hold it open — the auto-hide timer only reset on pointer
+        // MOVE, so pausing 3s over a button faded it away under the cursor mid-click.
+        ViewerChrome.PointerEntered += (_, _) => _chromeTimer.Stop();
+        ViewerChrome.PointerExited += (_, _) => { _chromeTimer.Stop(); _chromeTimer.Start(); };
+        VideoControlsBar.PointerEntered += (_, _) => _chromeTimer.Stop();
+        VideoControlsBar.PointerExited += (_, _) => { _chromeTimer.Stop(); _chromeTimer.Start(); };
+        VideoBackBar.PointerEntered += (_, _) => _chromeTimer.Stop();
+        VideoBackBar.PointerExited += (_, _) => { _chromeTimer.Stop(); _chromeTimer.Start(); };
 
         // Track activation: privacy re-hide, catch-up of deferred folder refreshes, and a diagnostic
         // trail (CodeActivated on a window the user didn't click = something programmatic stole focus).
@@ -384,6 +423,7 @@ public sealed partial class MainWindow : Window
             _vaults.WipeOrphanWorkDirs();
             ArchiveService.WipeOrphans(); // clear any leftover extracted-zip temp dirs from a prior run
             WipeShareTempDirs();          // clear any leftover remote-browse temp copies from a prior run
+            RecoverRenameJournal();       // restore names stranded by a crash mid bulk-rename
         }
         // Guest photo windows get no vault affordances at all: vault lifecycle (unlock/lock/share)
         // belongs to the primary window, and offering it here invites concurrent unlocks of the same
@@ -459,7 +499,7 @@ public sealed partial class MainWindow : Window
             // stable re-order by group rank/key that keeps the sort within each group.
             var (sortBy, sortDesc, groupBy) = _state.FolderSorts.TryGetValue(dir, out var pref)
                 ? (pref.SortBy, pref.SortDescending, pref.GroupBy)
-                : (_state.SortBy, _state.SortDescending, _state.GroupBy);
+                : (_sortBy, _sortDescending, _groupBy);
             var siblings = await Task.Run(() =>
             {
                 try
@@ -755,6 +795,7 @@ public sealed partial class MainWindow : Window
         CollageView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Visible;
         RefreshNetIndicator(); // hide the footer orb behind the viewer
+        UpdateChromeForDarkSurface();
         ShowChrome();
     }
 
@@ -766,7 +807,9 @@ public sealed partial class MainWindow : Window
         EnsureFileManager();
         if (ExplorerTabs.TabItems.Count == 0)
         {
-            var from = Current?.Path;
+            // In video/audio mode Current (a PhotoItem) is null — the playing file's path is the seed,
+            // so backing out of a directly-opened video lands in ITS folder, not This PC.
+            var from = Current?.Path ?? _currentVideoPath;
             NewTab(string.IsNullOrEmpty(from) ? null : System.IO.Path.GetDirectoryName(from));
             return; // NewTab re-enters here with a tab in place and finishes the transition
         }
@@ -780,6 +823,7 @@ public sealed partial class MainWindow : Window
         SettingsOverlay.Visibility = Visibility.Collapsed;
         InfoPanel.Visibility = Visibility.Collapsed;
         ExplorerView.Visibility = Visibility.Visible;
+        UpdateChromeForDarkSurface();
         ModeLabel.Text = ""; // the title-bar label is always visible — clear the viewed file's name on the way out
         RefreshNetIndicator(); // restore the footer orb when back in the explorer
         _chromeTimer.Stop();
@@ -798,6 +842,12 @@ public sealed partial class MainWindow : Window
 
     private void ShowChrome()
     {
+        if (InVideo)
+        {
+            VideoBackBar.Visibility = Visibility.Visible;
+            VideoControlsBar.Visibility = Visibility.Visible;
+        }
+        else if (InViewer) ViewerChrome.Visibility = Visibility.Visible; // undo the timer's collapse
         ViewerChrome.Opacity = 1;
         ViewerChrome.IsHitTestVisible = true;
         _chromeTimer.Stop();
@@ -1089,7 +1139,31 @@ public sealed partial class MainWindow : Window
         // Eye glyph reflects state: open eye = visible, eye-off = hidden.
         EyeIcon.Glyph = obscured ? GlyphEyeOff : GlyphEyeOpen;
         ToolTipService.SetToolTip(EyeButton, obscured ? "Reveal (H)" : "Hide (H)");
+
+        // The curtain must cover METADATA too: the filename in the title bar and the info panel
+        // (name/folder/EXIF) render above the black overlay and would identify the hidden photo.
+        if (obscured)
+        {
+            ModeLabel.Text = "";
+            if (InfoPanel.Visibility == Visibility.Visible)
+            {
+                _infoHiddenByObscure = true;
+                InfoPanel.Visibility = Visibility.Collapsed;
+            }
+        }
+        else if (Current is { } cur)
+        {
+            ModeLabel.Text = $"{cur.FileName}   ({_currentIndex + 1}/{_view.Count})";
+            if (_infoHiddenByObscure)
+            {
+                _infoHiddenByObscure = false;
+                InfoPanel.Visibility = Visibility.Visible;
+                _ = PopulateInfoAsync();
+            }
+        }
     }
+
+    private bool _infoHiddenByObscure; // info panel was open when the curtain dropped — restore on reveal
 
     /// <summary>Permanently flag the current photo as hidden (Hidden album); never deletes the file.</summary>
     private void EyeHidePermanent_Click(object sender, RoutedEventArgs e)
@@ -1254,6 +1328,7 @@ public sealed partial class MainWindow : Window
         ViewerView.Visibility = Visibility.Collapsed;
         InfoPanel.Visibility = Visibility.Collapsed;
         CollageView.Visibility = Visibility.Visible;
+        UpdateChromeForDarkSurface();
         ModeLabel.Text = "Collage";
 
         // Reflect the default layout (from settings) in the in-collage picker.
@@ -1874,25 +1949,37 @@ public sealed partial class MainWindow : Window
     /// <summary>Applies on-disk changes to the live list in place — inserting new items at their
     /// sorted position and removing deleted ones — so scroll position and selection are kept.
     /// Falls back to a full reload for grouped/search views.</summary>
+    /// <summary>The current folder vanished from disk — climb to the nearest surviving ancestor
+    /// (This PC as the last resort) instead of showing a dead listing forever. The watcher tears
+    /// itself down when its folder disappears, so nothing would ever refresh the stale view.</summary>
+    private void NavigateToNearestExisting()
+    {
+        var p = _currentFolder;
+        while (!string.IsNullOrEmpty(p) && !Directory.Exists(p)) p = System.IO.Path.GetDirectoryName(p);
+        NavigateTo(string.IsNullOrEmpty(p) ? null : p);
+        StatusText.Text = "That folder no longer exists.";
+    }
+
     private void RefreshFolderIncremental()
     {
-        if (_currentFolder is null || !Directory.Exists(_currentFolder)) return;
+        if (_currentFolder is null) return;
+        if (!Directory.Exists(_currentFolder)) { NavigateToNearestExisting(); return; }
 
         // Grouped or search views: patching grouped sources in place is fiddly — reload (keeps
         // selection). But first compare against what's already shown: when the watcher is just
         // echoing a change the UI applied in place (e.g. a rename), the listing matches and the
         // reload — with its thumbnail flicker and scroll reset — is skipped entirely.
-        if (_state.GroupBy != "None" || !string.IsNullOrEmpty(_searchQuery))
+        if (_groupBy != "None" || !string.IsNullOrEmpty(_searchQuery))
         {
             var fresh = SortItems(_fs.List(_currentFolder, showWindowsHidden: _showWindowsHidden, _showAppHidden));
             var same = SameSequence(fresh, _explorerItems);
             // Same flat order isn't enough when grouped: fresh metadata can move an item to another
             // group without reordering (e.g. an extension change under Name sort, or a new Modified
             // date under Date grouping) — compare group keys too before declaring it a no-op.
-            if (same && _state.GroupBy != "None")
+            if (same && _groupBy != "None")
                 for (var i = 0; i < fresh.Count && same; i++)
-                    same = string.Equals(GroupKeyRank(fresh[i], _state.GroupBy).Key,
-                                         GroupKeyRank(_explorerItems[i], _state.GroupBy).Key,
+                    same = string.Equals(GroupKeyRank(fresh[i], _groupBy).Key,
+                                         GroupKeyRank(_explorerItems[i], _groupBy).Key,
                                          StringComparison.OrdinalIgnoreCase);
             if (!same) RefreshFolderInPlace();
             return;
@@ -1980,7 +2067,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (_state.GroupBy == "None")
+        if (_groupBy == "None")
         {
             ExplorerIconsView.ItemsSource = _explorerItems;
             ExplorerDetailsList.ItemsSource = _explorerItems;
@@ -2014,7 +2101,8 @@ public sealed partial class MainWindow : Window
             return;
         }
         var searching = !string.IsNullOrEmpty(_searchQuery);
-        var empty = _explorerItems.Count == 0 && _currentFolder is not null;
+        // A no-match search must say so even on This PC (null folder), not show a silent blank pane.
+        var empty = _explorerItems.Count == 0 && (_currentFolder is not null || searching);
         ExplorerEmpty.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         if (!empty) return;
         if (searching)
@@ -2030,7 +2118,7 @@ public sealed partial class MainWindow : Window
     }
 
     private List<ExplorerItem> SortItems(List<ExplorerItem> items) =>
-        SortItems(items, _state.SortBy, _state.SortDescending);
+        SortItems(items, _sortBy, _sortDescending);
 
     private static List<ExplorerItem> SortItems(List<ExplorerItem> items, string sortBy, bool sortDescending)
     {
@@ -2095,7 +2183,7 @@ public sealed partial class MainWindow : Window
         var groups = new List<ExplorerGroup>();
         foreach (var it in sorted)
         {
-            var (key, rank) = GroupKeyRank(it, _state.GroupBy);
+            var (key, rank) = GroupKeyRank(it, _groupBy);
             if (!map.TryGetValue(key, out var g))
             {
                 g = new ExplorerGroup { Key = key, Rank = rank };
@@ -2154,17 +2242,17 @@ public sealed partial class MainWindow : Window
 
     private void Sort_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is RadioMenuFlyoutItem item) { _state.SortBy = item.Tag as string ?? "Name"; SaveSortPrefsForCurrentFolder(); _state.Save(); ApplySortAndGroup(); }
+        if (sender is RadioMenuFlyoutItem item) { _sortBy = item.Tag as string ?? "Name"; _state.SortBy = _sortBy; SaveSortPrefsForCurrentFolder(); _state.Save(); ApplySortAndGroup(); }
     }
 
     private void SortDir_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is RadioMenuFlyoutItem item) { _state.SortDescending = (item.Tag as string) == "Desc"; SaveSortPrefsForCurrentFolder(); _state.Save(); ApplySortAndGroup(); }
+        if (sender is RadioMenuFlyoutItem item) { _sortDescending = (item.Tag as string) == "Desc"; _state.SortDescending = _sortDescending; SaveSortPrefsForCurrentFolder(); _state.Save(); ApplySortAndGroup(); }
     }
 
     private void Group_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is RadioMenuFlyoutItem item) { _state.GroupBy = item.Tag as string ?? "None"; SaveSortPrefsForCurrentFolder(); _state.Save(); ApplySortAndGroup(); }
+        if (sender is RadioMenuFlyoutItem item) { _groupBy = item.Tag as string ?? "None"; _state.GroupBy = _groupBy; SaveSortPrefsForCurrentFolder(); _state.Save(); ApplySortAndGroup(); }
     }
 
     /// <summary>Applies the current folder's saved sort/group (if any) into the live state and
@@ -2173,9 +2261,9 @@ public sealed partial class MainWindow : Window
     {
         if (_currentFolder is not null && _state.FolderSorts.TryGetValue(_currentFolder, out var p))
         {
-            _state.SortBy = p.SortBy;
-            _state.SortDescending = p.SortDescending;
-            _state.GroupBy = p.GroupBy;
+            _sortBy = p.SortBy;
+            _sortDescending = p.SortDescending;
+            _groupBy = p.GroupBy;
         }
         SyncSortGroupRadios();
         UpdateSortHeaders();
@@ -2189,30 +2277,40 @@ public sealed partial class MainWindow : Window
         if (_currentFolder is null || _currentFolder == RecycleBin.Location || ShellLoc.IsShell(_currentFolder)) return;
         _state.FolderSorts[_currentFolder] = new FolderSortPref
         {
-            SortBy = _state.SortBy,
-            SortDescending = _state.SortDescending,
-            GroupBy = _state.GroupBy,
+            SortBy = _sortBy,
+            SortDescending = _sortDescending,
+            GroupBy = _groupBy,
         };
     }
 
     private void SyncSortGroupRadios()
     {
-        SortName.IsChecked = _state.SortBy == "Name";
-        SortDate.IsChecked = _state.SortBy == "Date";
-        SortType.IsChecked = _state.SortBy == "Type";
-        SortSize.IsChecked = _state.SortBy == "Size";
-        SortAsc.IsChecked = !_state.SortDescending;
-        SortDesc.IsChecked = _state.SortDescending;
-        GroupNone.IsChecked = _state.GroupBy == "None";
-        GroupName.IsChecked = _state.GroupBy == "Name";
-        GroupDate.IsChecked = _state.GroupBy == "Date";
-        GroupType.IsChecked = _state.GroupBy == "Type";
-        GroupSize.IsChecked = _state.GroupBy == "Size";
+        SortName.IsChecked = _sortBy == "Name";
+        SortDate.IsChecked = _sortBy == "Date";
+        SortType.IsChecked = _sortBy == "Type";
+        SortSize.IsChecked = _sortBy == "Size";
+        SortAsc.IsChecked = !_sortDescending;
+        SortDesc.IsChecked = _sortDescending;
+        GroupNone.IsChecked = _groupBy == "None";
+        GroupName.IsChecked = _groupBy == "Name";
+        GroupDate.IsChecked = _groupBy == "Date";
+        GroupType.IsChecked = _groupBy == "Type";
+        GroupSize.IsChecked = _groupBy == "Size";
     }
 
     private void ApplyViewMode()
     {
         var details = _explorerViewMode == "Details";
+        // Icons and Details are two independent list controls over the same items — carry the
+        // selection across so switching views doesn't silently drop it.
+        var from = details ? (ListViewBase)ExplorerIconsView : ExplorerDetailsList;
+        var to = details ? (ListViewBase)ExplorerDetailsList : ExplorerIconsView;
+        if (!ReferenceEquals(from, to) && from.SelectedItems.Count > 0)
+        {
+            var carry = from.SelectedItems.OfType<ExplorerItem>().ToList();
+            to.SelectedItems.Clear();
+            foreach (var it in carry) to.SelectedItems.Add(it);
+        }
         ExplorerIconsView.Visibility = details ? Visibility.Collapsed : Visibility.Visible;
         ExplorerDetailsView.Visibility = details ? Visibility.Visible : Visibility.Collapsed;
         if (!details) ApplyIconSize();
@@ -2981,6 +3079,11 @@ public sealed partial class MainWindow : Window
         var hidden = canHide && _state.HiddenFolders.Contains(_currentFolder!);
         HideFolderText.Text = hidden ? "Unhide folder" : "Hide folder";
         HideFolderIcon.Glyph = hidden ? GlyphEyeOpen : GlyphEyeOff;
+        // The tooltip must flip with the label — a stale "Hide this folder" over an "Unhide folder"
+        // button tells the user it does the opposite of what it does.
+        ToolTipService.SetToolTip(HideFolderBtn, hidden
+            ? "Show this folder again"
+            : "Hide this folder (appears empty)");
     }
 
     // ---- File operations ----
@@ -3405,7 +3508,9 @@ public sealed partial class MainWindow : Window
     /// views rebuild their lightweight group wrappers around the same objects and restore scroll.</summary>
     private void RefreshFolderInPlace()
     {
-        if (_currentFolder is null || !Directory.Exists(_currentFolder)) { LoadCurrentFolder(); return; }
+        if (_currentFolder is null || _currentFolder == RecycleBin.Location || ShellLoc.IsShell(_currentFolder))
+        { LoadCurrentFolder(); return; }
+        if (!Directory.Exists(_currentFolder)) { NavigateToNearestExisting(); return; }
         if (!string.IsNullOrEmpty(_searchQuery)) { ReloadKeepingSelection(); return; } // search results: old path
 
         var fresh = _fs.List(_currentFolder, showWindowsHidden: _showWindowsHidden, _showAppHidden);
@@ -3416,7 +3521,7 @@ public sealed partial class MainWindow : Window
         foreach (var it in _explorerItems) shown[it.Path] = it;
         _explorerRaw = fresh.Select(f => shown.TryGetValue(f.Path, out var old) ? old : f).ToList();
 
-        if (_state.GroupBy == "None")
+        if (_groupBy == "None")
         {
             ReconcileExplorerItems(SortItems(_explorerRaw));
             UpdateExplorerEmptyState();
@@ -3450,7 +3555,7 @@ public sealed partial class MainWindow : Window
     /// positions change. Grouped views rebuild their group wrappers around the same objects.</summary>
     private void ResortExplorerInPlace(ExplorerItem? focus = null)
     {
-        if (_state.GroupBy == "None" && string.IsNullOrEmpty(_searchQuery) && _currentFolder is not null)
+        if (_groupBy == "None" && string.IsNullOrEmpty(_searchQuery) && _currentFolder is not null)
             ReconcileExplorerItems(SortItems(_explorerRaw));
         else
             ApplySortAndGroup();
@@ -3460,6 +3565,36 @@ public sealed partial class MainWindow : Window
             list.SelectedItem = focus;
             list.ScrollIntoView(focus);
         }
+    }
+
+    private static readonly string RenameJournalPath = System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Galileo", "rename-journal.json");
+
+    /// <summary>Crash recovery: restores original names for files stranded mid bulk-rename (the
+    /// journal survives a crash between the temp-rename and final-rename phases).</summary>
+    private static void RecoverRenameJournal()
+    {
+        try
+        {
+            if (!File.Exists(RenameJournalPath)) return;
+            var map = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(RenameJournalPath));
+            if (map is not null)
+                foreach (var (temp, original) in map)
+                {
+                    try
+                    {
+                        if (!File.Exists(temp) && !Directory.Exists(temp)) continue;
+                        var dest = original;
+                        if (File.Exists(dest) || Directory.Exists(dest))
+                            dest = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(original)!,
+                                System.IO.Path.GetFileNameWithoutExtension(original) + " (restored)" + System.IO.Path.GetExtension(original));
+                        if (Directory.Exists(temp)) Directory.Move(temp, dest); else File.Move(temp, dest);
+                    }
+                    catch { /* leave that one for manual recovery rather than fail the launch */ }
+                }
+            File.Delete(RenameJournalPath);
+        }
+        catch { /* recovery is best-effort */ }
     }
 
     /// <summary>Bulk-renames a multi-selection like Explorer, but with dash numbering: the primary
@@ -3523,17 +3658,30 @@ public sealed partial class MainWindow : Window
         }
 
         // Phase 1: move everything to temp names so target names can't collide with current ones.
-        foreach (var (_, si, _) in resolved)
+        // The journal is written BEFORE any rename: a crash (or phase-2 failure) between the phases
+        // would otherwise strand files as extension-less "__galileo_…" names with no way back.
+        var journal = new List<(string Temp, string Original)>();
+        foreach (var (it, _, _) in resolved)
+            journal.Add((System.IO.Path.Combine(dir, "__galileo_" + Guid.NewGuid().ToString("N")), it.Path));
+        try
         {
-            try { await si.RenameAsync("__galileo_" + Guid.NewGuid().ToString("N"), NameCollisionOption.GenerateUniqueName); }
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(RenameJournalPath)!);
+            File.WriteAllText(RenameJournalPath, System.Text.Json.JsonSerializer.Serialize(
+                journal.ToDictionary(j => j.Temp, j => j.Original)));
+        }
+        catch { /* best-effort — worst case is the old stranding behavior */ }
+        for (var i = 0; i < resolved.Count; i++)
+        {
+            try { await resolved[i].si.RenameAsync(System.IO.Path.GetFileName(journal[i].Temp), NameCollisionOption.GenerateUniqueName); }
             catch { }
         }
 
         // Phase 2: assign final names with a monotonic counter, skipping names already on disk.
         var counter = 0;
         var ok = 0;
-        foreach (var (it, si, ext) in resolved)
+        for (var i = 0; i < resolved.Count; i++)
         {
+            var (it, si, ext) = resolved[i];
             var useExt = string.IsNullOrEmpty(typedExt) ? ext : typedExt; // typed ext wins, else keep own
             string name;
             while (true)
@@ -3544,10 +3692,17 @@ public sealed partial class MainWindow : Window
                 if (!File.Exists(full) && !Directory.Exists(full)) break;
             }
             try { await si.RenameAsync(name, NameCollisionOption.FailIfExists); ok++; }
-            catch (Exception ex) { StatusText.Text = $"Rename failed: {ex.Message}"; }
+            catch (Exception ex)
+            {
+                StatusText.Text = $"Rename failed: {ex.Message}";
+                // Give the file its REAL name back rather than leaving the meaningless temp name.
+                try { await si.RenameAsync(System.IO.Path.GetFileName(journal[i].Original), NameCollisionOption.GenerateUniqueName); }
+                catch { }
+            }
             _state.RepathEntry(it.Path, si.Path); // hidden/favorite/thumbnail/sort/pin flags follow the rename
-            it.Rename(si.Path);   // whatever landed on disk (final name, or the temp on failure)
+            it.Rename(si.Path);   // whatever landed on disk (final name, restored original, or the temp)
         }
+        try { File.Delete(RenameJournalPath); } catch { } // clean run — nothing to recover
 
         // One in-place re-sort instead of a full reload — same objects, thumbnails intact.
         ResortExplorerInPlace();
@@ -4130,8 +4285,9 @@ public sealed partial class MainWindow : Window
     private void SortHeader_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button b || b.Tag is not string key) return;
-        if (_state.SortBy == key) _state.SortDescending = !_state.SortDescending;
-        else { _state.SortBy = key; _state.SortDescending = false; }
+        if (_sortBy == key) _sortDescending = !_sortDescending;
+        else { _sortBy = key; _sortDescending = false; }
+        _state.SortBy = _sortBy; _state.SortDescending = _sortDescending; // last-used default
         SaveSortPrefsForCurrentFolder();
         _state.Save();
         ApplySortAndGroup();
@@ -4142,8 +4298,8 @@ public sealed partial class MainWindow : Window
     {
         void Set(Button b, string label, string key)
         {
-            var arrow = _state.SortDescending ? " ▾" : " ▴"; // ▾ / ▴
-            b.Content = _state.SortBy == key ? label + arrow : label;
+            var arrow = _sortDescending ? " ▾" : " ▴"; // ▾ / ▴
+            b.Content = _sortBy == key ? label + arrow : label;
         }
         Set(HdrName, "Name", "Name");
         Set(HdrDate, "Date modified", "Date");
@@ -4196,7 +4352,7 @@ public sealed partial class MainWindow : Window
             var q = _searchQuery;
             var root = _currentFolder;
             StatusText.Text = $"Searching {System.IO.Path.GetFileName(root.TrimEnd('\\'))}…";
-            var results = await Task.Run(() => _fs.Search(root, q));
+            var results = await Task.Run(() => _fs.Search(root, q, _showWindowsHidden, _showAppHidden));
             if (q != _searchQuery || root != _currentFolder) return; // a newer query/folder superseded us
             _searchResults = results;
         }
@@ -4223,8 +4379,9 @@ public sealed partial class MainWindow : Window
         ExplorerTabs.SelectedItem = tvi;
         _switchingTabs = false;
         // The TabView raises SelectionChanged for this add asynchronously, after the guard above has
-        // been reset — suppress that one echo so the new tab doesn't load twice.
-        _suppressNextTabSelection = true;
+        // been reset — suppress that one echo so the new tab doesn't load twice. Tab-scoped (not a
+        // blind one-shot): if the echo never arrives, a bare flag would swallow the next REAL click.
+        _suppressSelectionFor = tvi;
 
         // Fresh navigation state for the new tab, then go.
         _navHistory.Clear();
@@ -4234,7 +4391,7 @@ public sealed partial class MainWindow : Window
         NavigateTo(path);
     }
 
-    private bool _suppressNextTabSelection;
+    private TabViewItem? _suppressSelectionFor;
 
     private void SyncActiveTab()
     {
@@ -4279,7 +4436,12 @@ public sealed partial class MainWindow : Window
     private async void ExplorerTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_switchingTabs) return;
-        if (_suppressNextTabSelection) { _suppressNextTabSelection = false; return; } // NewTab's async echo
+        if (_suppressSelectionFor is { } sup)
+        {
+            _suppressSelectionFor = null;
+            if (ReferenceEquals(ExplorerTabs.SelectedItem, sup)) return; // NewTab's async echo
+            // Not the echo — a real switch the user made; handle it normally.
+        }
         if (ExplorerTabs.SelectedItem is not TabViewItem tvi || tvi.Tag is not ExplorerTab tab) return;
 
         // Returning to an unlocked vault tab: re-materialize the working copy if it went missing/empty
@@ -4351,6 +4513,11 @@ public sealed partial class MainWindow : Window
         _marqueeActive = true;
         _marqueeStart = e.GetCurrentPoint(ExplorerContentArea).Position;
         if (!IsCtrlDown()) ExplorerIconsView.SelectedItems.Clear();
+        // Ctrl+marquee is ADDITIVE: the selection made before the drag is the baseline the box adds
+        // to — without it, the first pointer move deselected everything outside the box.
+        _marqueeBaseline.Clear();
+        if (IsCtrlDown())
+            foreach (var s in ExplorerIconsView.SelectedItems.OfType<ExplorerItem>()) _marqueeBaseline.Add(s);
         ExplorerIconsView.CapturePointer(e.Pointer);
         UpdateMarquee(_marqueeStart);
         MarqueeRect.Visibility = Visibility.Visible;
@@ -4393,6 +4560,9 @@ public sealed partial class MainWindow : Window
         MarqueeRect.Height = Math.Abs(cur.Y - _marqueeStart.Y);
     }
 
+    /// <summary>Pre-marquee selection kept selected during a Ctrl+drag (additive marquee).</summary>
+    private readonly HashSet<ExplorerItem> _marqueeBaseline = new();
+
     private void SelectWithinMarquee()
     {
         var box = new Windows.Foundation.Rect(MarqueeRect.Margin.Left, MarqueeRect.Margin.Top, MarqueeRect.Width, MarqueeRect.Height);
@@ -4400,7 +4570,8 @@ public sealed partial class MainWindow : Window
         {
             if (ExplorerIconsView.ContainerFromItem(item) is not GridViewItem c) continue; // realized containers only
             var b = c.TransformToVisual(ExplorerContentArea).TransformBounds(new Windows.Foundation.Rect(0, 0, c.ActualWidth, c.ActualHeight));
-            var hit = !(b.Right < box.Left || b.Left > box.Right || b.Bottom < box.Top || b.Top > box.Bottom);
+            var hit = !(b.Right < box.Left || b.Left > box.Right || b.Bottom < box.Top || b.Top > box.Bottom)
+                      || _marqueeBaseline.Contains(item);
             var selected = ExplorerIconsView.SelectedItems.Contains(item);
             if (hit && !selected) ExplorerIconsView.SelectedItems.Add(item);
             else if (!hit && selected) ExplorerIconsView.SelectedItems.Remove(item);
@@ -4426,6 +4597,39 @@ public sealed partial class MainWindow : Window
         return _currentFolder;
     }
 
+    // Volume root of the first dragged item, resolved async on the first DragOver frame. Windows
+    // convention: a same-volume drag MOVES, a cross-volume drag (USB stick, network share) COPIES —
+    // defaulting cross-volume to move deleted originals off the user's removable media.
+    private string? _dragSourceRoot;
+    private bool _dragSourceRootPending;
+
+    private void ResetDragSource() { _dragSourceRoot = null; _dragSourceRootPending = false; }
+
+    private static string? VolumeRootOf(string path)
+    {
+        try { return System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(path)); } catch { return null; }
+    }
+
+    private async System.Threading.Tasks.Task CacheDragSourceRootAsync(DataPackageView view)
+    {
+        try
+        {
+            var items = await view.GetStorageItemsAsync();
+            var first = items.Select(i => i.Path).FirstOrDefault(p => !string.IsNullOrEmpty(p));
+            _dragSourceRoot = first is null ? null : VolumeRootOf(first);
+        }
+        catch { _dragSourceRoot = null; }
+    }
+
+    /// <summary>Move or copy for this drag: Shift forces move, Ctrl forces copy, otherwise Windows'
+    /// rule — move within a volume, copy across volumes (Copy until the source volume is known).</summary>
+    private bool DragWantsMove(string target)
+    {
+        if (IsCtrlDown()) return false;
+        if (IsShiftDown()) return true;
+        return _dragSourceRoot is { } src && string.Equals(src, VolumeRootOf(target), StringComparison.OrdinalIgnoreCase);
+    }
+
     private void ExplorerList_DragOver(object sender, DragEventArgs e)
     {
         var target = DropTargetFolder(e);
@@ -4434,12 +4638,16 @@ public sealed partial class MainWindow : Window
             e.AcceptedOperation = DataPackageOperation.None;
             return;
         }
-        // Explorer convention: dragging into a folder MOVES by default; hold Ctrl to copy.
-        var copy = IsCtrlDown();
-        e.AcceptedOperation = copy ? DataPackageOperation.Copy : DataPackageOperation.Move;
+        if (!_dragSourceRootPending)
+        {
+            _dragSourceRootPending = true;
+            _ = CacheDragSourceRootAsync(e.DataView);
+        }
+        var move = DragWantsMove(target);
+        e.AcceptedOperation = move ? DataPackageOperation.Move : DataPackageOperation.Copy;
         if (e.DragUIOverride is not null)
         {
-            e.DragUIOverride.Caption = copy ? "Copy here" : "Move here";
+            e.DragUIOverride.Caption = move ? "Move here" : "Copy here";
             e.DragUIOverride.IsCaptionVisible = true;
             e.DragUIOverride.IsGlyphVisible = true;
         }
@@ -4451,7 +4659,8 @@ public sealed partial class MainWindow : Window
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
         var target = DropTargetFolder(e);
         if (target is null) return;
-        var move = !IsCtrlDown(); // default move; Ctrl copies
+        var move = DragWantsMove(target); // same rule the DragOver caption promised
+        ResetDragSource();
         e.Handled = true;
 
         var deferral = e.GetDeferral();
@@ -4469,6 +4678,14 @@ public sealed partial class MainWindow : Window
         // Dropping onto a friend's shared folder uploads into their vault (needs write access) instead of a
         // local move/copy — the temp browse folder isn't a real destination.
         if (InRemoteBrowse(target)) { await RemoteUploadItemsAsync(target, paths); return; }
+        // MTP/portable-device targets have no filesystem path — the copy engine would fail every file
+        // ("Copied 0 item(s), N failed"). Route through the shell uploader like the Upload button does.
+        if (ShellLoc.IsShell(target))
+        {
+            try { _shell.Upload(paths, ShellLoc.Unwrap(target), WinRT.Interop.WindowNative.GetWindowHandle(this)); }
+            catch (Exception ex) { StatusText.Text = $"Upload failed: {ex.Message}"; }
+            return;
+        }
         try
         {
             var result = await RunTransferWithUiAsync(target, paths, move);
@@ -4552,7 +4769,7 @@ public sealed partial class MainWindow : Window
         TransferFile.Text = "Preparing…";
         TransferStats.Text = "";
         TransferEta.Text = "";
-        TransferBarFill.Width = 0;
+        TransferBar.Value = 0;
         SetTransferPaused(false);
     }
 
@@ -4682,7 +4899,7 @@ public sealed partial class MainWindow : Window
         if (!string.IsNullOrEmpty(p.CurrentFile)) TransferFile.Text = p.CurrentFile;
 
         _transferFrac = Math.Clamp(p.Fraction, 0, 1);
-        if (TransferBarTrack.ActualWidth > 0) TransferBarFill.Width = TransferBarTrack.ActualWidth * _transferFrac;
+        TransferBar.Value = _transferFrac;
 
         var pct = (int)Math.Round(_transferFrac * 100);
         TransferStats.Text = p.BytesTotal > 0
@@ -4692,8 +4909,6 @@ public sealed partial class MainWindow : Window
         SetTransferPaused(p.Paused);
     }
 
-    private void TransferBarTrack_SizeChanged(object sender, SizeChangedEventArgs e)
-        => TransferBarFill.Width = e.NewSize.Width * _transferFrac;
 
     private void ShowTransferPanel()
     {
@@ -5429,7 +5644,18 @@ public sealed partial class MainWindow : Window
         // known-laid-out element — ActualHeight bindings don't update reliably in WinUI.
         SettingsCard.MaxHeight = Math.Max(320, RootGrid.ActualHeight - 40);
         SettingsOverlay.Visibility = Visibility.Visible;
+        // Focus-modal: the card's TabFocusNavigation=Cycle traps Tab, but only once focus is INSIDE —
+        // otherwise Tab keeps walking the dimmed UI behind the scrim (address bar included).
+        ThemeCombo.Focus(FocusState.Programmatic);
         AnimateSettingsIn();
+    }
+
+    /// <summary>Keeps the Settings card within the window as it is resized WHILE open — a one-shot cap
+    /// left Save/Cancel unreachable below the bottom edge after shrinking the window.</summary>
+    private void RootGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (SettingsOverlay.Visibility == Visibility.Visible)
+            SettingsCard.MaxHeight = Math.Max(320, RootGrid.ActualHeight - 40);
     }
 
     private void SingleInstanceSwitch_Toggled(object sender, RoutedEventArgs e)
@@ -5510,11 +5736,32 @@ public sealed partial class MainWindow : Window
     private Microsoft.UI.Xaml.Media.MicaBackdrop? _micaBackdrop;
 
     // Reuse one Mica backdrop instead of allocating a new controller on every theme apply (avoids a flash).
+    // Mica needs Windows 11 (22000+); on Windows 10 / RDP / transparency-off it silently fails to apply,
+    // and with RootGrid.Background = null the window would have NO base surface at all — fall back to
+    // Acrylic, then to a solid theme brush.
     private void EnsureMica()
     {
-        _micaBackdrop ??= new Microsoft.UI.Xaml.Media.MicaBackdrop();
-        if (!ReferenceEquals(SystemBackdrop, _micaBackdrop)) SystemBackdrop = _micaBackdrop;
+        if (Microsoft.UI.Composition.SystemBackdrops.MicaController.IsSupported())
+        {
+            _micaBackdrop ??= new Microsoft.UI.Xaml.Media.MicaBackdrop();
+            if (!ReferenceEquals(SystemBackdrop, _micaBackdrop)) SystemBackdrop = _micaBackdrop;
+        }
+        else if (Microsoft.UI.Composition.SystemBackdrops.DesktopAcrylicController.IsSupported())
+        {
+            if (SystemBackdrop is not Microsoft.UI.Xaml.Media.DesktopAcrylicBackdrop)
+                SystemBackdrop = new Microsoft.UI.Xaml.Media.DesktopAcrylicBackdrop();
+        }
+        else
+        {
+            SystemBackdrop = null;
+            RootGrid.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SolidBackgroundFillColorBaseBrush"];
+        }
     }
+
+    /// <summary>True when no translucent backdrop is available — RootGrid must keep a solid background.</summary>
+    private static bool BackdropAvailable =>
+        Microsoft.UI.Composition.SystemBackdrops.MicaController.IsSupported()
+        || Microsoft.UI.Composition.SystemBackdrops.DesktopAcrylicController.IsSupported();
 
     private void ApplyTheme()
     {
@@ -5525,12 +5772,12 @@ public sealed partial class MainWindow : Window
         {
             case "Light":
                 EnsureMica();
-                RootGrid.Background = null;
+                if (BackdropAvailable) RootGrid.Background = null;
                 SetElementTheme(ElementTheme.Light);
                 break;
             case "Dark":
                 EnsureMica();
-                RootGrid.Background = null;
+                if (BackdropAvailable) RootGrid.Background = null;
                 SetElementTheme(ElementTheme.Dark);
                 break;
             case "Terminal":
@@ -5541,18 +5788,35 @@ public sealed partial class MainWindow : Window
                 break;
             default:
                 EnsureMica();
-                RootGrid.Background = null;
+                if (BackdropAvailable) RootGrid.Background = null;
                 SetElementTheme(ElementTheme.Default);
                 break;
         }
 
         // Caption buttons (min/max/close) need a matching foreground or they vanish on the backdrop.
-        SetCaptionColors(_state.Theme switch
-        {
-            "Light" => Rgb(255, 30, 30, 30),
-            "System" => (Windows.UI.Color?)null,   // let the system decide
-            _ => Rgb(255, 235, 235, 235)           // Dark / Terminal / Gray
-        });
+        ApplyCaptionColorsForTheme();
+        UpdateChromeForDarkSurface(); // theme switched mid-viewer/editor: keep the chrome readable
+    }
+
+    private void ApplyCaptionColorsForTheme() => SetCaptionColors(_state.Theme switch
+    {
+        "Light" => Rgb(255, 30, 30, 30),
+        "System" => (Windows.UI.Color?)null,   // let the system decide
+        _ => Rgb(255, 235, 235, 235)           // Dark / Terminal / Gray
+    });
+
+    /// <summary>Viewer/editor/collage paint a hardcoded dark surface up behind the title bar — in
+    /// Light theme the theme-colored brand/filename/status text and caption glyphs would be
+    /// near-black on black. Force dark-theme (light-on-dark) chrome while any of them is visible.</summary>
+    private void UpdateChromeForDarkSurface()
+    {
+        var dark = ViewerView.Visibility == Visibility.Visible
+                || EditorView.Visibility == Visibility.Visible
+                || CollageView.Visibility == Visibility.Visible;
+        AppTitleBar.RequestedTheme = dark ? ElementTheme.Dark : ElementTheme.Default;
+        StatusText.RequestedTheme = dark ? ElementTheme.Dark : ElementTheme.Default;
+        if (dark) SetCaptionColors(Rgb(255, 235, 235, 235));
+        else ApplyCaptionColorsForTheme();
     }
 
     private void SetCaptionColors(Windows.UI.Color? fg)
@@ -5653,7 +5917,14 @@ public sealed partial class MainWindow : Window
 
     // The X and the dim scrim both cancel (discard edits); a tap inside the card is swallowed.
     private void SettingsClose_Click(object sender, RoutedEventArgs e) => CancelSettings();
-    private void SettingsScrim_Tapped(object sender, TappedRoutedEventArgs e) => CancelSettings();
+    private void SettingsScrim_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        // A stray click 2px outside the card must not silently throw away pending edits — once
+        // something changed, Save/Cancel (or Esc) are the explicit exits.
+        if (_settingsSnapshot is not null && _state.Fingerprint() != _settingsSnapshot.Fingerprint()) return;
+        CancelSettings();
+    }
+
     private void SettingsCard_Tapped(object sender, TappedRoutedEventArgs e) => e.Handled = true;
 
     private void SlideshowSecondsSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
@@ -5953,6 +6224,7 @@ public sealed partial class MainWindow : Window
                 OpenVaultShortcutAsync(); e.Handled = true; break;
 
             case VirtualKey.F5:
+                if (InVideo) break; // a slideshow over a still-playing video would double the audio
                 if (ExplorerView.Visibility != Visibility.Visible) StartSlideshow();
                 else if (InRemoteBrowse(_currentFolder))
                     RefreshRemoteBrowse();   // re-list the owner's vault (adds/deletes/changes), not just the temp dir
@@ -6098,10 +6370,14 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // The OPEN gesture must respect e.Handled: this hook runs handledEventsToo, and Space on a
+        // focused Button both invokes the button AND opened Peek on whatever row was selected.
+        if (e.Handled) return;
         if (e.Key == VirtualKey.Space
             && ExplorerView.Visibility == Visibility.Visible
             && _state.PeekEnabled
-            && !IsTextInputFocused())
+            && !IsTextInputFocused()
+            && FocusManager.GetFocusedElement(RootGrid.XamlRoot) is not Button and not ToggleButton)
         {
             var item = FocusedExplorerItem();
             if (item is not null && item.Kind != ExplorerItemKind.Drive)
@@ -6118,7 +6394,7 @@ public sealed partial class MainWindow : Window
         // list (onto the overlay) so arrows drive Peek rather than moving the list underneath.
         ActiveExplorerList().SelectedItem = item;
         PeekOverlay.Visibility = Visibility.Visible;
-        PeekOverlay.Focus(FocusState.Programmatic);
+        PeekOverlay.Focus(FocusState.Programmatic); // + TabFocusNavigation=Cycle keeps Tab inside
         ShowPeekFor(item);
     }
 
@@ -6140,7 +6416,12 @@ public sealed partial class MainWindow : Window
         if (count == 0) return;
         var cur = list.SelectedIndex;
         if (cur < 0) cur = _peekItem is not null ? list.Items.IndexOf(_peekItem) : 0;
-        var next = Math.Clamp(cur + delta, 0, count - 1);
+        // Step over items Peek refuses to open (drives in This PC) instead of landing on them.
+        var next = cur;
+        do { next += Math.Sign(delta); }
+        while (next >= 0 && next < count && list.Items[next] is ExplorerItem { Kind: ExplorerItemKind.Drive });
+        next = Math.Clamp(next, 0, count - 1);
+        if (list.Items[next] is ExplorerItem { Kind: ExplorerItemKind.Drive }) return; // nothing peekable that way
         if (next == cur && list.Items[next] == _peekItem) return;
         list.SelectedIndex = next;
         list.ScrollIntoView(list.Items[next]);
@@ -6182,8 +6463,14 @@ public sealed partial class MainWindow : Window
                 if (token != _peekToken) return;
                 PeekVideo.Source = MediaSource.CreateFromStorageFile(file);
                 PeekVideo.Visibility = Visibility.Visible;
-                if (PeekVideo.MediaPlayer is not null)
-                    PeekVideo.MediaPlayer.AudioCategory = Windows.Media.Playback.MediaPlayerAudioCategory.Movie;
+                if (PeekVideo.MediaPlayer is { } peekMp)
+                {
+                    peekMp.AudioCategory = Windows.Media.Playback.MediaPlayerAudioCategory.Movie;
+                    // Honor the same remembered mute/volume as the main player — a peek must not
+                    // blast full volume at someone who keeps videos muted.
+                    peekMp.IsMuted = _state.VideoMuted || (!PhotoLibrary.IsAudio(item.Path) && _state.StartVideoMuted);
+                    peekMp.Volume = Math.Clamp(_state.VideoVolume, 0, 100) / 100.0;
+                }
                 PeekVideo.MediaPlayer?.Play();
             }
             else if (item.Kind == ExplorerItemKind.File && IsTextPreviewable(item.Path))
@@ -6790,7 +7077,7 @@ public sealed partial class MainWindow : Window
 
         // Remember where the user keeps photo windows so the next one opens on the same spot/monitor.
         // Only a normal (restored) window — a maximized/fullscreen rect would be wrong to re-apply.
-        if (_secondaryWindow && !_isFullScreen
+        if ((_secondaryWindow || LaunchedNewWindow()) && !_isFullScreen
             && (_appWindow.Presenter as Microsoft.UI.Windowing.OverlappedPresenter)?.State
                 == Microsoft.UI.Windowing.OverlappedPresenterState.Restored)
         {

@@ -58,7 +58,8 @@
                     <StackPanel Grid.Row="1">
                         <TextBlock Text="{Binding DisplayName}" FontSize="12" Margin="0,2,0,0"
                                    TextAlignment="Center" TextWrapping="Wrap" MaxLines="2"
-                                   TextTrimming="CharacterEllipsis" />
+                                   TextTrimming="CharacterEllipsis"
+                                   ToolTipService.ToolTip="{Binding Name}" />
                         <!-- Drive capacity bar + "X free of Y" (drives only) -->
                         <ProgressBar Maximum="100" Value="{Binding UsedPercent}" Height="6" MinHeight="6" Margin="6,4,6,0"
                                      Visibility="{Binding CapacityVisibility}" />
@@ -71,16 +72,18 @@
 
             <!-- Explorer: details row -->
             <DataTemplate x:Key="ExplorerDetailsTemplate">
-                <Grid Height="30" Opacity="{Binding ItemOpacity}">
+                <Grid MinHeight="30" Opacity="{Binding ItemOpacity}">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
+                        <!-- NOTE: these column widths must stay in sync with the details header row in MainWindow.xaml -->
+                        <ColumnDefinition Width="*" MinWidth="180" />
                         <ColumnDefinition Width="160" />
                         <ColumnDefinition Width="130" />
                         <ColumnDefinition Width="90" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                         <Image Source="{Binding Icon}" Width="20" Height="20" />
-                        <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                   ToolTipService.ToolTip="{Binding Name}" />
                     </StackPanel>
                     <TextBlock Grid.Column="1" Text="{Binding ModifiedText}" VerticalAlignment="Center" Opacity="0.8" FontSize="13" />
                     <TextBlock Grid.Column="2" Text="{Binding TypeName}" VerticalAlignment="Center" Opacity="0.8" FontSize="13" />

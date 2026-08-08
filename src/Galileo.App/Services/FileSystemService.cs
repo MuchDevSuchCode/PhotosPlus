@@ -86,34 +86,39 @@ public sealed class FileSystemService
         return folders;
     }
 
-    /// <summary>Recursively finds items under <paramref name="root"/> whose name contains the query.</summary>
-    public List<ExplorerItem> Search(string root, string query, int max = 4000)
+    /// <summary>Recursively finds items under <paramref name="root"/> whose name contains the query.
+    /// Walks manually (not RecurseSubdirectories) so app-hidden folders can be PRUNED — their contents
+    /// must never surface in results, or search would defeat the hidden-folder privacy feature. Honors
+    /// the same hidden-item toggles as <see cref="List"/> and never descends into reparse points.</summary>
+    public List<ExplorerItem> Search(string root, string query, bool showWindowsHidden, bool showAppHidden, int max = 4000)
     {
         var results = new List<ExplorerItem>();
         if (string.IsNullOrWhiteSpace(query)) return results;
-        try
+
+        void Walk(DirectoryInfo dir)
         {
-            var opts = new EnumerationOptions
+            if (results.Count >= max) return;
+            IEnumerable<FileSystemInfo> entries;
+            try { entries = dir.EnumerateFileSystemInfos().ToList(); }
+            catch { return; } // access denied etc. — keep what we have
+            foreach (var info in entries)
             {
-                RecurseSubdirectories = true,
-                IgnoreInaccessible = true,
-                AttributesToSkip = FileAttributes.System
-            };
-            foreach (var info in new DirectoryInfo(root).EnumerateFileSystemInfos("*", opts))
-            {
-                if (results.Count >= max) break;
-                if (info.Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                if (info.Attributes.HasFlag(FileAttributes.Hidden)) continue;
+                if (results.Count >= max) return;
+                if (IsWindowsHidden(info.Attributes) && !showWindowsHidden) continue;
                 if (info is DirectoryInfo d)
-                    results.Add(new ExplorerItem(d.FullName, ExplorerItemKind.Folder, 0, SafeWrite(d), "Folder"));
-                else if (info is FileInfo f)
+                {
+                    var appHidden = _state.HiddenFolders.Contains(d.FullName);
+                    if (appHidden && !showAppHidden) continue;                      // prune the whole branch
+                    if ((d.Attributes & FileAttributes.ReparsePoint) != 0) continue; // junction cycles / foreign targets
+                    if (d.Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                        results.Add(new ExplorerItem(d.FullName, ExplorerItemKind.Folder, 0, SafeWrite(d), "Folder") { IsAppHidden = appHidden });
+                    Walk(d);
+                }
+                else if (info is FileInfo f && f.Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
                     results.Add(new ExplorerItem(f.FullName, ExplorerItemKind.File, SafeLength(f), SafeWrite(f), TypeName(f.Extension)));
             }
         }
-        catch
-        {
-            // Return whatever we gathered before the error.
-        }
+        try { Walk(new DirectoryInfo(root)); } catch { }
         return results;
     }
 

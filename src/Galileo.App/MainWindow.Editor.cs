@@ -193,6 +193,7 @@ public sealed partial class MainWindow
 
             ViewerView.Visibility = Visibility.Collapsed;
             EditorView.Visibility = Visibility.Visible;
+            UpdateChromeForDarkSurface();
             _editLoading = false;
             _editCanvas?.Invalidate();
         }
@@ -203,6 +204,7 @@ public sealed partial class MainWindow
     {
         EditorView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Visible;
+        UpdateChromeForDarkSurface();
         try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true;
 
         // Stop any in-flight AI first and invalidate its result — otherwise disposing a session later would

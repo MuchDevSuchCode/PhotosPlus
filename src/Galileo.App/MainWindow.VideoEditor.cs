@@ -291,7 +291,7 @@ public sealed partial class MainWindow
         {
             if (!ReferenceEquals(_activeOp, token)) return; // ignore stale reports if another op took over
             _transferFrac = Math.Clamp(pct / 100.0, 0, 1);
-            if (TransferBarTrack.ActualWidth > 0) TransferBarFill.Width = TransferBarTrack.ActualWidth * _transferFrac;
+            TransferBar.Value = _transferFrac;
             TransferStats.Text = $"{pct:0}%";
             TransferEta.Text = "";
         });

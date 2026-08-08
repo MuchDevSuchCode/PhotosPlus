@@ -35,7 +35,7 @@
                                   ItemClick="Sidebar_ItemClick">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="10" Height="32">
+                                    <StackPanel Orientation="Horizontal" Spacing="10" MinHeight="32">
                                         <Image Source="{Binding Icon}" Width="18" Height="18" VerticalAlignment="Center" />
                                         <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
@@ -48,7 +48,7 @@
                                   ItemClick="Sidebar_ItemClick">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="10" Height="32">
+                                    <StackPanel Orientation="Horizontal" Spacing="10" MinHeight="32">
                                         <Image Source="{Binding Icon}" Width="18" Height="18" VerticalAlignment="Center" />
                                         <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
@@ -62,7 +62,7 @@
                                       ItemClick="Sidebar_ItemClick">
                                 <ListView.ItemTemplate>
                                     <DataTemplate>
-                                        <StackPanel Orientation="Horizontal" Spacing="10" Height="32">
+                                        <StackPanel Orientation="Horizontal" Spacing="10" MinHeight="32">
                                             <Image Source="{Binding Icon}" Width="18" Height="18" VerticalAlignment="Center" />
                                             <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
@@ -76,7 +76,7 @@
                                   ItemClick="Sidebar_ItemClick" RightTapped="PinnedList_RightTapped">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="10" Height="32">
+                                    <StackPanel Orientation="Horizontal" Spacing="10" MinHeight="32">
                                         <Image Source="{Binding Icon}" Width="18" Height="18" VerticalAlignment="Center" />
                                         <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
@@ -110,7 +110,7 @@
                                       ItemClick="VaultsList_ItemClick" RightTapped="VaultsList_RightTapped">
                                 <ListView.ItemTemplate>
                                     <DataTemplate>
-                                        <StackPanel Orientation="Horizontal" Spacing="10" Height="32">
+                                        <StackPanel Orientation="Horizontal" Spacing="10" MinHeight="32">
                                             <FontIcon Glyph="{Binding Glyph}" FontFamily="Segoe Fluent Icons"
                                                       FontSize="15" VerticalAlignment="Center" />
                                             <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
@@ -161,13 +161,13 @@
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
-                        <Button x:Name="BackNav" Style="{StaticResource GlyphButton}" Width="36" Height="36" Click="NavBack_Click" ToolTipService.ToolTip="Back">
+                        <Button x:Name="BackNav" Style="{StaticResource GlyphButton}" Width="36" Height="36" Click="NavBack_Click" ToolTipService.ToolTip="Back" AutomationProperties.Name="Back">
                             <FontIcon Glyph="&#xE72B;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </Button>
-                        <Button x:Name="FwdNav" Style="{StaticResource GlyphButton}" Width="36" Height="36" Click="NavForward_Click" ToolTipService.ToolTip="Forward">
+                        <Button x:Name="FwdNav" Style="{StaticResource GlyphButton}" Width="36" Height="36" Click="NavForward_Click" ToolTipService.ToolTip="Forward" AutomationProperties.Name="Forward">
                             <FontIcon Glyph="&#xE72A;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </Button>
-                        <Button x:Name="UpNav" Style="{StaticResource GlyphButton}" Width="36" Height="36" Click="NavUp_Click" ToolTipService.ToolTip="Up">
+                        <Button x:Name="UpNav" Style="{StaticResource GlyphButton}" Width="36" Height="36" Click="NavUp_Click" ToolTipService.ToolTip="Up" AutomationProperties.Name="Up">
                             <FontIcon Glyph="&#xE70E;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </Button>
                     </StackPanel>
@@ -187,10 +187,10 @@
                     </Border>
 
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
-                        <Button x:Name="EditPathBtn" Style="{StaticResource GlyphButton}" Width="36" Height="36" Click="EditPath_Click" ToolTipService.ToolTip="Edit path">
+                        <Button x:Name="EditPathBtn" Style="{StaticResource GlyphButton}" Width="36" Height="36" Click="EditPath_Click" ToolTipService.ToolTip="Edit path" AutomationProperties.Name="Edit path">
                             <FontIcon Glyph="&#xE70F;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </Button>
-                        <Button x:Name="RefreshBtn" Style="{StaticResource GlyphButton}" Width="36" Height="36" Click="Refresh_Click" ToolTipService.ToolTip="Refresh">
+                        <Button x:Name="RefreshBtn" Style="{StaticResource GlyphButton}" Width="36" Height="36" Click="Refresh_Click" ToolTipService.ToolTip="Refresh" AutomationProperties.Name="Refresh">
                             <FontIcon Glyph="&#xE72C;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </Button>
                     </StackPanel>
@@ -202,7 +202,10 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                    <ScrollViewer Grid.Column="0" VerticalAlignment="Center"
+                                  HorizontalScrollBarVisibility="Hidden" HorizontalScrollMode="Enabled"
+                                  VerticalScrollBarVisibility="Disabled" VerticalScrollMode="Disabled">
+                    <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
                     <Button Click="NewFolder_Click" ToolTipService.ToolTip="New folder">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon Glyph="&#xE8F4;" FontFamily="Segoe Fluent Icons" FontSize="14" />
@@ -243,13 +246,15 @@
                         </StackPanel>
                     </Button>
                     </StackPanel>
+                    </ScrollViewer>
 
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                         <AutoSuggestBox x:Name="SearchBox" Width="180" PlaceholderText="Search" QueryIcon="Find"
                                         VerticalAlignment="Center" TextChanged="SearchBox_TextChanged"
                                         ToolTipService.ToolTip="Search this folder" />
                         <ToggleButton x:Name="SearchRecursiveToggle" Click="SearchRecursive_Click"
-                                      ToolTipService.ToolTip="Include subfolders in search">
+                                      ToolTipService.ToolTip="Include subfolders in search"
+                                      AutomationProperties.Name="Include subfolders in search">
                             <FontIcon Glyph="&#xE8B7;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </ToggleButton>
                         <Button ToolTipService.ToolTip="Sort by">
@@ -284,7 +289,7 @@
                                 </MenuFlyout>
                             </Button.Flyout>
                         </Button>
-                        <Button ToolTipService.ToolTip="Recycle Bin">
+                        <Button ToolTipService.ToolTip="Recycle Bin" AutomationProperties.Name="Recycle Bin">
                             <FontIcon Glyph="&#xE74D;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                             <Button.Flyout>
                                 <MenuFlyout>
@@ -297,22 +302,25 @@
                                 </MenuFlyout>
                             </Button.Flyout>
                         </Button>
-                        <Button Click="Settings_Click" ToolTipService.ToolTip="Settings">
+                        <Button Click="Settings_Click" ToolTipService.ToolTip="Settings" AutomationProperties.Name="Settings">
                             <FontIcon Glyph="&#xE713;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </Button>
                         <Button x:Name="TerminalBtn" Visibility="Collapsed" Click="TerminalToggle_Click"
-                                ToolTipService.ToolTip="Terminal (Developer Mode)">
+                                ToolTipService.ToolTip="Terminal (Developer Mode)"
+                                AutomationProperties.Name="Terminal">
                             <FontIcon Glyph="&#xE756;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </Button>
-                        <ToggleButton x:Name="ShowHiddenToggle" Click="ShowAppHidden_Click" ToolTipService.ToolTip="Show app-hidden folders">
-                            <FontIcon Glyph="&#xE890;" FontFamily="Segoe Fluent Icons" FontSize="14" />
-                        </ToggleButton>
-                        <ToggleButton x:Name="ShowWindowsHiddenToggle" Click="ShowWindowsHidden_Click"
-                                      ToolTipService.ToolTip="Show hidden items (this session only)">
+                        <ToggleButton x:Name="ShowHiddenToggle" Click="ShowAppHidden_Click" ToolTipService.ToolTip="Show app-hidden folders"
+                                      AutomationProperties.Name="Show app-hidden folders">
                             <FontIcon Glyph="&#xED1A;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </ToggleButton>
-                        <Button x:Name="ViewModeBtn" ToolTipService.ToolTip="View">
-                            <FontIcon Glyph="&#xE8A9;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                        <ToggleButton x:Name="ShowWindowsHiddenToggle" Click="ShowWindowsHidden_Click"
+                                      ToolTipService.ToolTip="Show hidden items (this session only)"
+                                      AutomationProperties.Name="Show hidden items">
+                            <FontIcon Glyph="&#xED1A;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                        </ToggleButton>
+                        <Button x:Name="ViewModeBtn" ToolTipService.ToolTip="View" AutomationProperties.Name="View">
+                            <FontIcon Glyph="&#xE71D;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                             <Button.Flyout>
                                 <MenuFlyout>
                                     <RadioMenuFlyoutItem x:Name="ViewLarge" Text="Large icons" GroupName="view" Click="ViewMode_Click" Tag="Large" />
@@ -324,7 +332,7 @@
                         </Button>
                         <Slider x:Name="IconSizeSlider" Width="120" Minimum="48" Maximum="240" Value="110"
                                 ValueChanged="IconSize_ValueChanged" VerticalAlignment="Center"
-                                ToolTipService.ToolTip="Icon size" />
+                                ToolTipService.ToolTip="Icon size" AutomationProperties.Name="Icon size" />
                     </StackPanel>
                 </Grid>
 
@@ -372,9 +380,10 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
-                        <Grid Margin="58,0,24,0" Height="28" Grid.Row="0">
+                        <Grid Margin="58,0,24,0" MinHeight="28" Grid.Row="0">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
+                                <!-- NOTE: these column widths must stay in sync with ExplorerDetailsTemplate in App.xaml -->
+                                <ColumnDefinition Width="*" MinWidth="180" />
                                 <ColumnDefinition Width="160" />
                                 <ColumnDefinition Width="130" />
                                 <ColumnDefinition Width="90" />
@@ -464,7 +473,7 @@
                     <ComboBox x:Name="ShellCombo" MinWidth="150" SelectionChanged="ShellCombo_SelectionChanged"
                               ToolTipService.ToolTip="Shell" />
                     <Button Grid.Column="1" Style="{StaticResource GlyphButton}" Click="TerminalClose_Click"
-                            ToolTipService.ToolTip="Close terminal">
+                            ToolTipService.ToolTip="Close terminal" AutomationProperties.Name="Close terminal">
                         <FontIcon Glyph="&#xE8BB;" FontFamily="Segoe Fluent Icons" FontSize="13" />
                     </Button>
                 </Grid>
@@ -525,7 +534,7 @@
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel Orientation="Horizontal" Spacing="2">
                     <Button x:Name="OpenButton" Style="{StaticResource GlyphButton}"
-                            ToolTipService.ToolTip="Open">
+                            ToolTipService.ToolTip="Open" AutomationProperties.Name="Open">
                         <FontIcon Glyph="&#xE8E5;" FontFamily="Segoe Fluent Icons" />
                         <Button.Flyout>
                             <MenuFlyout>
@@ -539,18 +548,18 @@
                         </Button.Flyout>
                     </Button>
                     <Button Style="{StaticResource GlyphButton}" Click="Slideshow_Click"
-                            ToolTipService.ToolTip="Slideshow (F5)">
+                            ToolTipService.ToolTip="Slideshow (F5)" AutomationProperties.Name="Slideshow">
                         <FontIcon Glyph="&#xE786;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                     <Button Style="{StaticResource GlyphButton}" Click="Collage_Click"
-                            ToolTipService.ToolTip="Collage">
+                            ToolTipService.ToolTip="Collage" AutomationProperties.Name="Collage">
                         <FontIcon Glyph="&#xE8A9;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                     <Button Style="{StaticResource GlyphButton}" Click="Settings_Click"
-                            ToolTipService.ToolTip="Settings">
+                            ToolTipService.ToolTip="Settings" AutomationProperties.Name="Settings">
                         <FontIcon Glyph="&#xE713;" FontFamily="Segoe Fluent Icons" />
                     </Button>
-                    <Button Style="{StaticResource GlyphButton}" ToolTipService.ToolTip="More">
+                    <Button Style="{StaticResource GlyphButton}" ToolTipService.ToolTip="More" AutomationProperties.Name="More">
                         <FontIcon Glyph="&#xE712;" FontFamily="Segoe Fluent Icons" />
                         <Button.Flyout>
                             <MenuFlyout>
@@ -621,7 +630,7 @@
                     HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,48,0,0"
                     CornerRadius="22" Padding="4" Background="{StaticResource PillBrush}">
                 <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="BackToGallery_Click"
-                        ToolTipService.ToolTip="Back (Esc)">
+                        ToolTipService.ToolTip="Back (Esc)" AutomationProperties.Name="Back">
                     <FontIcon Glyph="&#xE72B;" FontFamily="Segoe Fluent Icons" />
                 </Button>
             </Border>
@@ -630,18 +639,21 @@
                     CornerRadius="24" Padding="4" Background="{StaticResource PillBrush}">
                 <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
                     <Button x:Name="VideoVolumeBtn" Style="{StaticResource GlyphButton}" Foreground="White"
-                            Click="VideoVolume_Click" ToolTipService.ToolTip="Mute / unmute">
+                            Click="VideoVolume_Click" ToolTipService.ToolTip="Mute / unmute"
+                            AutomationProperties.Name="Mute / unmute">
                         <FontIcon x:Name="VideoVolumeIcon" Glyph="&#xE995;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                     <Slider x:Name="VideoVolumeSlider" Width="92" Minimum="0" Maximum="100" Value="100"
                             VerticalAlignment="Center" Margin="2,0,8,0" ValueChanged="VideoVolume_SliderChanged"
-                            ToolTipService.ToolTip="Volume" />
+                            ToolTipService.ToolTip="Volume" AutomationProperties.Name="Volume" />
                     <Button x:Name="VideoRepeatBtn" Style="{StaticResource GlyphButton}" Foreground="White"
-                            Click="VideoRepeat_Click" ToolTipService.ToolTip="Repeat">
+                            Click="VideoRepeat_Click" ToolTipService.ToolTip="Repeat"
+                            AutomationProperties.Name="Repeat">
                         <FontIcon x:Name="VideoRepeatIcon" Glyph="&#xE8EE;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                     <Button x:Name="VideoEditBtn" Style="{StaticResource GlyphButton}" Foreground="White"
-                            Click="VideoEdit_Click" ToolTipService.ToolTip="Edit / export video">
+                            Click="VideoEdit_Click" ToolTipService.ToolTip="Edit / export video"
+                            AutomationProperties.Name="Edit video">
                         <FontIcon Glyph="&#xE70F;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                 </StackPanel>
@@ -697,7 +709,7 @@
                           Background="{ThemeResource LayerFillColorAltBrush}">
                         <TextBlock Text="Edit video" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Style="{StaticResource GlyphButton}" Click="CloseVideoEditor_Click"
-                                ToolTipService.ToolTip="Close">
+                                ToolTipService.ToolTip="Close" AutomationProperties.Name="Close">
                             <FontIcon Glyph="&#xE711;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </Button>
                     </Grid>
@@ -725,10 +737,10 @@
                             <StackPanel Spacing="8">
                                 <TextBlock Text="TRANSFORM" Style="{StaticResource SettingSectionHeader}" />
                                 <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                    <Button Click="EditRotateLeft_Click" ToolTipService.ToolTip="Rotate left">
+                                    <Button Click="EditRotateLeft_Click" ToolTipService.ToolTip="Rotate left" AutomationProperties.Name="Rotate left">
                                         <FontIcon Glyph="&#xE7AD;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                                     </Button>
-                                    <Button Click="EditRotateRight_Click" ToolTipService.ToolTip="Rotate right">
+                                    <Button Click="EditRotateRight_Click" ToolTipService.ToolTip="Rotate right" AutomationProperties.Name="Rotate right">
                                         <FontIcon Glyph="&#xE7AE;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                                     </Button>
                                     <TextBlock x:Name="EditRotateText" Text="0°" VerticalAlignment="Center" Opacity="0.8" />
@@ -764,18 +776,18 @@
                                     <ToggleSwitch x:Name="EditStabilize" Grid.Column="1" Header="Stabilize" />
                                 </Grid>
                                 <TextBlock Text="Brightness" FontSize="12" Opacity="0.7" />
-                                <Slider x:Name="EditBrightness" Minimum="-1" Maximum="1" StepFrequency="0.05" Value="0" />
+                                <Slider x:Name="EditBrightness" Minimum="-1" Maximum="1" StepFrequency="0.05" Value="0" AutomationProperties.Name="Brightness" />
                                 <TextBlock Text="Contrast" FontSize="12" Opacity="0.7" />
-                                <Slider x:Name="EditContrast" Minimum="0" Maximum="2" StepFrequency="0.05" Value="1" />
+                                <Slider x:Name="EditContrast" Minimum="0" Maximum="2" StepFrequency="0.05" Value="1" AutomationProperties.Name="Contrast" />
                                 <TextBlock Text="Saturation" FontSize="12" Opacity="0.7" />
-                                <Slider x:Name="EditSaturation" Minimum="0" Maximum="3" StepFrequency="0.05" Value="1" />
+                                <Slider x:Name="EditSaturation" Minimum="0" Maximum="3" StepFrequency="0.05" Value="1" AutomationProperties.Name="Saturation" />
                             </StackPanel>
 
                             <!-- Playback / audio -->
                             <StackPanel Spacing="8">
                                 <TextBlock Text="SPEED &amp; AUDIO" Style="{StaticResource SettingSectionHeader}" />
                                 <TextBlock Text="Speed (×)" FontSize="12" Opacity="0.7" />
-                                <Slider x:Name="EditSpeed" Minimum="0.25" Maximum="4" StepFrequency="0.05" Value="1" />
+                                <Slider x:Name="EditSpeed" Minimum="0.25" Maximum="4" StepFrequency="0.05" Value="1" AutomationProperties.Name="Speed" />
                                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
                                     <TextBlock Text="Frame rate" VerticalAlignment="Center" />
                                     <NumberBox x:Name="EditFps" Grid.Column="1" Value="0" Minimum="0" SpinButtonPlacementMode="Hidden"
@@ -810,7 +822,7 @@
                                     <ComboBox x:Name="EditCodecCombo" Grid.Column="1" HorizontalAlignment="Stretch" SelectedIndex="0" />
                                 </Grid>
                                 <TextBlock Text="Quality (CRF — lower is better)" FontSize="12" Opacity="0.7" />
-                                <Slider x:Name="EditCrf" Minimum="0" Maximum="51" StepFrequency="1" Value="21" />
+                                <Slider x:Name="EditCrf" Minimum="0" Maximum="51" StepFrequency="1" Value="21" AutomationProperties.Name="Quality (CRF)" />
                                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
                                     <TextBlock Text="Preset" VerticalAlignment="Center" />
                                     <ComboBox x:Name="EditPresetCombo" Grid.Column="1" HorizontalAlignment="Stretch" SelectedIndex="2">
@@ -847,7 +859,7 @@
                 <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,48,0,0"
                         CornerRadius="22" Padding="4" Background="{StaticResource PillBrush}">
                     <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="BackToGallery_Click"
-                            ToolTipService.ToolTip="Back to gallery (Esc)">
+                            ToolTipService.ToolTip="Back to gallery (Esc)" AutomationProperties.Name="Back to gallery">
                         <FontIcon Glyph="&#xE72B;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                 </Border>
@@ -857,11 +869,13 @@
                         CornerRadius="24" Padding="4" Background="{StaticResource PillBrush}">
                     <StackPanel Orientation="Horizontal" Spacing="2">
                         <Button x:Name="FavoriteButton" Style="{StaticResource GlyphButton}" Foreground="White"
-                                Click="Favorite_Click" ToolTipService.ToolTip="Favorite">
+                                Click="Favorite_Click" ToolTipService.ToolTip="Favorite"
+                                AutomationProperties.Name="Favorite">
                             <FontIcon x:Name="FavoriteIcon" Glyph="&#xE734;" FontFamily="Segoe Fluent Icons" />
                         </Button>
                         <Button x:Name="EyeButton" Style="{StaticResource GlyphButton}" Foreground="White"
-                                Click="Eye_Click" ToolTipService.ToolTip="Hide / reveal (H)">
+                                Click="Eye_Click" ToolTipService.ToolTip="Hide / reveal (H)"
+                                AutomationProperties.Name="Hide / reveal">
                             <FontIcon x:Name="EyeIcon" Glyph="&#xE890;" FontFamily="Segoe Fluent Icons" />
                             <Button.Flyout>
                                 <MenuFlyout Placement="Bottom">
@@ -869,29 +883,29 @@
                                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xED1A;" FontFamily="Segoe Fluent Icons" /></MenuFlyoutItem.Icon>
                                     </MenuFlyoutItem>
                                     <MenuFlyoutItem Text="Hide permanently (Hidden album)" Click="EyeHidePermanent_Click">
-                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE890;" FontFamily="Segoe Fluent Icons" /></MenuFlyoutItem.Icon>
+                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE72E;" FontFamily="Segoe Fluent Icons" /></MenuFlyoutItem.Icon>
                                     </MenuFlyoutItem>
                                 </MenuFlyout>
                             </Button.Flyout>
                         </Button>
                         <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Rotate_Click"
-                                ToolTipService.ToolTip="Rotate (R)">
+                                ToolTipService.ToolTip="Rotate (R)" AutomationProperties.Name="Rotate">
                             <FontIcon Glyph="&#xE7AD;" FontFamily="Segoe Fluent Icons" />
                         </Button>
                         <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Edit_Click"
-                                ToolTipService.ToolTip="Edit image">
+                                ToolTipService.ToolTip="Edit image" AutomationProperties.Name="Edit image">
                             <FontIcon Glyph="&#xE70F;" FontFamily="Segoe Fluent Icons" />
                         </Button>
                         <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Info_Click"
-                                ToolTipService.ToolTip="Photo info">
+                                ToolTipService.ToolTip="Photo info" AutomationProperties.Name="Photo info">
                             <FontIcon Glyph="&#xE946;" FontFamily="Segoe Fluent Icons" />
                         </Button>
                         <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Reveal_Click"
-                                ToolTipService.ToolTip="Reveal in Explorer">
+                                ToolTipService.ToolTip="Reveal in Explorer" AutomationProperties.Name="Reveal in Explorer">
                             <FontIcon Glyph="&#xEC50;" FontFamily="Segoe Fluent Icons" />
                         </Button>
                         <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Delete_Click"
-                                ToolTipService.ToolTip="Delete">
+                                ToolTipService.ToolTip="Delete" AutomationProperties.Name="Delete">
                             <FontIcon Glyph="&#xE74D;" FontFamily="Segoe Fluent Icons" />
                         </Button>
                     </StackPanel>
@@ -902,32 +916,32 @@
                         CornerRadius="26" Padding="6" Background="{StaticResource PillBrush}">
                     <StackPanel Orientation="Horizontal" Spacing="2">
                         <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Prev_Click"
-                                ToolTipService.ToolTip="Previous">
+                                ToolTipService.ToolTip="Previous" AutomationProperties.Name="Previous">
                             <FontIcon Glyph="&#xE76B;" FontFamily="Segoe Fluent Icons" />
                         </Button>
                         <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="ZoomOut_Click"
-                                ToolTipService.ToolTip="Zoom out">
+                                ToolTipService.ToolTip="Zoom out" AutomationProperties.Name="Zoom out">
                             <FontIcon Glyph="&#xE71F;" FontFamily="Segoe Fluent Icons" />
                         </Button>
                         <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Fit_Click"
-                                ToolTipService.ToolTip="Fit (0)">
+                                ToolTipService.ToolTip="Fit (0)" AutomationProperties.Name="Fit">
                             <FontIcon Glyph="&#xE9A6;" FontFamily="Segoe Fluent Icons" />
                         </Button>
                         <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="ZoomIn_Click"
-                                ToolTipService.ToolTip="Zoom in">
+                                ToolTipService.ToolTip="Zoom in" AutomationProperties.Name="Zoom in">
                             <FontIcon Glyph="&#xE8A3;" FontFamily="Segoe Fluent Icons" />
                         </Button>
                         <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Next_Click"
-                                ToolTipService.ToolTip="Next">
+                                ToolTipService.ToolTip="Next" AutomationProperties.Name="Next">
                             <FontIcon Glyph="&#xE76C;" FontFamily="Segoe Fluent Icons" />
                         </Button>
                         <Border Width="1" Margin="6,8" Background="#33FFFFFF" />
                         <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Slideshow_Click"
-                                ToolTipService.ToolTip="Slideshow (F5)">
+                                ToolTipService.ToolTip="Slideshow (F5)" AutomationProperties.Name="Slideshow">
                             <FontIcon Glyph="&#xE786;" FontFamily="Segoe Fluent Icons" />
                         </Button>
                         <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="FullScreen_Click"
-                                ToolTipService.ToolTip="Full screen (F11)">
+                                ToolTipService.ToolTip="Full screen (F11)" AutomationProperties.Name="Full screen">
                             <FontIcon Glyph="&#xE740;" FontFamily="Segoe Fluent Icons" />
                         </Button>
                     </StackPanel>
@@ -977,11 +991,11 @@
                         Background="#CC000000" CornerRadius="8" Padding="4">
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <Button Content="−" Click="EditZoomOut_Click" MinWidth="34" FontSize="15"
-                                ToolTipService.ToolTip="Zoom out" />
+                                ToolTipService.ToolTip="Zoom out" AutomationProperties.Name="Zoom out" />
                         <Button x:Name="EditZoomLabel" Content="Fit" Click="EditZoomFit_Click" MinWidth="62"
                                 ToolTipService.ToolTip="Reset to fit the window" />
                         <Button Content="+" Click="EditZoomIn_Click" MinWidth="34" FontSize="15"
-                                ToolTipService.ToolTip="Zoom in" />
+                                ToolTipService.ToolTip="Zoom in" AutomationProperties.Name="Zoom in" />
                     </StackPanel>
                 </Border>
             </Grid>
@@ -996,10 +1010,10 @@
                         <StackPanel Spacing="8">
                             <TextBlock Text="TRANSFORM" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />
                             <StackPanel Orientation="Horizontal" Spacing="6">
-                                <Button Content="↺" FontSize="16" MinWidth="40" Click="RotateCcw_Click" ToolTipService.ToolTip="Rotate left" />
-                                <Button Content="↻" FontSize="16" MinWidth="40" Click="RotateCw_Click" ToolTipService.ToolTip="Rotate right" />
-                                <Button Content="↔" FontSize="16" MinWidth="40" Click="FlipH_Click" ToolTipService.ToolTip="Flip horizontal" />
-                                <Button Content="↕" FontSize="16" MinWidth="40" Click="FlipV_Click" ToolTipService.ToolTip="Flip vertical" />
+                                <Button Content="↺" FontSize="16" MinWidth="40" Click="RotateCcw_Click" ToolTipService.ToolTip="Rotate left" AutomationProperties.Name="Rotate left" />
+                                <Button Content="↻" FontSize="16" MinWidth="40" Click="RotateCw_Click" ToolTipService.ToolTip="Rotate right" AutomationProperties.Name="Rotate right" />
+                                <Button Content="↔" FontSize="16" MinWidth="40" Click="FlipH_Click" ToolTipService.ToolTip="Flip horizontal" AutomationProperties.Name="Flip horizontal" />
+                                <Button Content="↕" FontSize="16" MinWidth="40" Click="FlipV_Click" ToolTipService.ToolTip="Flip vertical" AutomationProperties.Name="Flip vertical" />
                             </StackPanel>
                             <TextBlock Text="Crop" Foreground="White" FontSize="13" />
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -1019,26 +1033,27 @@
                             </StackPanel>
                             <TextBlock Text="Straighten" Foreground="White" FontSize="13" />
                             <Slider x:Name="StraightenSlider" Minimum="-45" Maximum="45" Value="0"
-                                    StepFrequency="1" ValueChanged="Straighten_Changed" />
+                                    StepFrequency="1" ValueChanged="Straighten_Changed"
+                                    AutomationProperties.Name="Straighten" />
                         </StackPanel>
 
                         <!-- Adjust -->
                         <StackPanel Spacing="6">
                             <TextBlock Text="ADJUST" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />
                             <TextBlock Text="Exposure" Foreground="White" FontSize="12" />
-                            <Slider x:Name="ExposureSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" />
+                            <Slider x:Name="ExposureSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" AutomationProperties.Name="Exposure" />
                             <TextBlock Text="Brightness" Foreground="White" FontSize="12" />
-                            <Slider x:Name="BrightnessSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" />
+                            <Slider x:Name="BrightnessSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" AutomationProperties.Name="Brightness" />
                             <TextBlock Text="Contrast" Foreground="White" FontSize="12" />
-                            <Slider x:Name="ContrastSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" />
+                            <Slider x:Name="ContrastSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" AutomationProperties.Name="Contrast" />
                             <TextBlock Text="Saturation" Foreground="White" FontSize="12" />
-                            <Slider x:Name="SaturationSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" />
+                            <Slider x:Name="SaturationSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" AutomationProperties.Name="Saturation" />
                             <TextBlock Text="Temperature" Foreground="White" FontSize="12" />
-                            <Slider x:Name="TemperatureSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" />
+                            <Slider x:Name="TemperatureSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" AutomationProperties.Name="Temperature" />
                             <TextBlock Text="Tint" Foreground="White" FontSize="12" />
-                            <Slider x:Name="TintSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" />
+                            <Slider x:Name="TintSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" AutomationProperties.Name="Tint" />
                             <TextBlock Text="Sharpness" Foreground="White" FontSize="12" />
-                            <Slider x:Name="SharpnessSlider" Minimum="0" Maximum="100" Value="0" ValueChanged="Adjust_Changed" />
+                            <Slider x:Name="SharpnessSlider" Minimum="0" Maximum="100" Value="0" ValueChanged="Adjust_Changed" AutomationProperties.Name="Sharpness" />
                         </StackPanel>
 
                         <!-- Filters -->
@@ -1079,9 +1094,9 @@
                                         ToolTipService.ToolTip="Restore faces (CodeFormer)" />
                             </StackPanel>
                             <TextBlock Text="Denoise strength" Foreground="White" FontSize="12" />
-                            <Slider x:Name="AiStrength" Minimum="0" Maximum="100" Value="40" ValueChanged="AiStrength_Changed" />
+                            <Slider x:Name="AiStrength" Minimum="0" Maximum="100" Value="40" ValueChanged="AiStrength_Changed" AutomationProperties.Name="Denoise strength" />
                             <TextBlock Text="Face fidelity (low = more invented detail)" Foreground="White" FontSize="12" />
-                            <Slider x:Name="AiFidelity" Minimum="0" Maximum="100" Value="70" />
+                            <Slider x:Name="AiFidelity" Minimum="0" Maximum="100" Value="70" AutomationProperties.Name="Face fidelity" />
                             <ProgressBar x:Name="AiProgress" Minimum="0" Maximum="1" Value="0" Visibility="Collapsed" />
                             <Button x:Name="AiCancelBtn" Content="Cancel" Click="AiCancel_Click" Visibility="Collapsed"
                                     HorizontalAlignment="Stretch"
@@ -1155,10 +1170,15 @@
             <Border Grid.Row="2" Grid.ColumnSpan="2" Background="#FF15151B"
                     BorderBrush="#22FFFFFF" BorderThickness="0,1,0,0" Padding="12,8">
                 <Grid>
-                    <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Left">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" HorizontalAlignment="Left">
                         <Button Content="Reset" Click="EditReset_Click" VerticalAlignment="Center" />
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
                         <Button Click="EditUndo_Click" ToolTipService.ToolTip="Undo the last change (including AI)">
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <FontIcon Glyph="&#xE7A7;" FontFamily="Segoe Fluent Icons" FontSize="14" />
@@ -1172,7 +1192,7 @@
                             </StackPanel>
                         </Button>
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
                         <Button Content="Cancel" Click="EditCancel_Click" />
                         <Button Content="Save Copy" Click="SaveCopy_Click" />
                         <Button Content="Overwrite" Click="SaveOverwrite_Click" />
@@ -1191,22 +1211,22 @@
                     CornerRadius="26" Padding="6" Background="{StaticResource PillBrush}">
                 <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
                     <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="CollageBack_Click"
-                            ToolTipService.ToolTip="Back to gallery (Esc)">
+                            ToolTipService.ToolTip="Back to gallery (Esc)" AutomationProperties.Name="Back to gallery">
                         <FontIcon Glyph="&#xE72B;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                     <Border Width="1" Margin="6,8" Background="#33FFFFFF" />
                     <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="CollageFewer_Click"
-                            ToolTipService.ToolTip="Fewer photos">
+                            ToolTipService.ToolTip="Fewer photos" AutomationProperties.Name="Fewer photos">
                         <FontIcon Glyph="&#xE738;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                     <TextBlock x:Name="CollageCountText" Foreground="White" VerticalAlignment="Center"
                                MinWidth="64" TextAlignment="Center" Text="0 photos" />
                     <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="CollageMore_Click"
-                            ToolTipService.ToolTip="More photos">
+                            ToolTipService.ToolTip="More photos" AutomationProperties.Name="More photos">
                         <FontIcon Glyph="&#xE710;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                     <Border Width="1" Margin="6,8" Background="#33FFFFFF" />
-                    <Button Style="{StaticResource GlyphButton}" Foreground="White" ToolTipService.ToolTip="Layout">
+                    <Button Style="{StaticResource GlyphButton}" Foreground="White" ToolTipService.ToolTip="Layout" AutomationProperties.Name="Layout">
                         <FontIcon Glyph="&#xE71D;" FontFamily="Segoe Fluent Icons" />
                         <Button.Flyout>
                             <MenuFlyout>
@@ -1220,11 +1240,11 @@
                         </Button.Flyout>
                     </Button>
                     <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="CollageShuffle_Click"
-                            ToolTipService.ToolTip="Shuffle">
+                            ToolTipService.ToolTip="Shuffle" AutomationProperties.Name="Shuffle">
                         <FontIcon Glyph="&#xE8B1;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                     <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="CollageSave_Click"
-                            ToolTipService.ToolTip="Save collage…">
+                            ToolTipService.ToolTip="Save collage…" AutomationProperties.Name="Save collage">
                         <FontIcon Glyph="&#xE74E;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                 </StackPanel>
@@ -1242,7 +1262,7 @@
         <!-- ===================== Settings overlay ===================== -->
         <Grid x:Name="SettingsOverlay" Visibility="Collapsed" Background="#AA000000"
               Tapped="SettingsScrim_Tapped">
-            <Border x:Name="SettingsCard" Width="540" MaxHeight="760"
+            <Border x:Name="SettingsCard" MaxWidth="540" MaxHeight="760" Margin="16,0"
                     VerticalAlignment="Center" HorizontalAlignment="Center" RenderTransformOrigin="0.5,0.5"
                     Background="{ThemeResource SolidBackgroundFillColorBaseBrush}" CornerRadius="14"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
@@ -1286,7 +1306,8 @@
                     <Grid Padding="24,20,16,12">
                         <TextBlock Text="Settings" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button Style="{StaticResource GlyphButton}" Click="SettingsClose_Click"
-                                HorizontalAlignment="Right" ToolTipService.ToolTip="Close without saving">
+                                HorizontalAlignment="Right" ToolTipService.ToolTip="Close without saving"
+                                AutomationProperties.Name="Close">
                             <FontIcon Glyph="&#xE8BB;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </Button>
                     </Grid>
@@ -1422,7 +1443,8 @@
                                                 <TextBlock Grid.Column="1" x:Name="SlideshowSecondsValue" Text="4s" VerticalAlignment="Center" Opacity="0.8" />
                                             </Grid>
                                             <Slider x:Name="SlideshowSecondsSlider" Minimum="2" Maximum="30" StepFrequency="1"
-                                                    ValueChanged="SlideshowSecondsSlider_ValueChanged" />
+                                                    ValueChanged="SlideshowSecondsSlider_ValueChanged"
+                                                    AutomationProperties.Name="Seconds per photo" />
                                         </StackPanel>
                                         <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
                                             <TextBlock Text="Shuffle" VerticalAlignment="Center" />
@@ -1740,14 +1762,15 @@
                     <Grid Grid.Row="0" Padding="16,10" ColumnDefinitions="*,Auto"
                           Background="{ThemeResource LayerFillColorAltBrush}">
                         <TextBlock x:Name="PeekTitle" VerticalAlignment="Center" FontWeight="SemiBold"
-                                   FontSize="14" TextTrimming="CharacterEllipsis" />
+                                   FontSize="14" TextTrimming="CharacterEllipsis"
+                                   ToolTipService.ToolTip="{Binding Text, RelativeSource={RelativeSource Mode=Self}}" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2">
                             <Button x:Name="PeekOpenBtn" Style="{StaticResource GlyphButton}" Click="PeekOpen_Click"
-                                    ToolTipService.ToolTip="Open (Enter)">
+                                    ToolTipService.ToolTip="Open (Enter)" AutomationProperties.Name="Open">
                                 <FontIcon Glyph="&#xE8E5;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                             </Button>
                             <Button Style="{StaticResource GlyphButton}" Click="PeekClose_Click"
-                                    ToolTipService.ToolTip="Close (Space / Esc)">
+                                    ToolTipService.ToolTip="Close (Space / Esc)" AutomationProperties.Name="Close">
                                 <FontIcon Glyph="&#xE8BB;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                             </Button>
                         </StackPanel>
@@ -1797,10 +1820,13 @@
 
         <!-- Subtle status text — left-aligned but width-bounded + ellipsized so long messages
              (e.g. a wipe/transfer with a long filename) never spill across the window or sidebar. -->
+        <!-- Hit-testable so the ellipsized text can show its full content in a tooltip; the hit area
+             is only the rendered text's own bounds, so it barely occludes the content behind it. -->
         <TextBlock x:Name="StatusText" Text="Ready" FontSize="12" Opacity="0.55"
                    HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="16,0,16,8"
                    MaxWidth="460" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
-                   IsHitTestVisible="False" />
+                   AutomationProperties.LiveSetting="Polite"
+                   ToolTipService.ToolTip="{Binding Text, RelativeSource={RelativeSource Mode=Self}}" />
 
         <!-- ===================== File-transfer progress (Apple-style floating card) ===================== -->
         <Border x:Name="TransferPanel" Visibility="Collapsed" Opacity="0"
@@ -1825,34 +1851,28 @@
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
                         <Button x:Name="TransferPauseBtn" Click="TransferPause_Click"
                                 Width="32" Height="32" CornerRadius="16" Padding="0" VerticalAlignment="Center"
-                                ToolTipService.ToolTip="Pause">
+                                ToolTipService.ToolTip="Pause" AutomationProperties.Name="Pause">
                             <FontIcon x:Name="TransferPauseIcon" Glyph="&#xE769;" FontFamily="Segoe Fluent Icons" FontSize="13" />
                         </Button>
                         <Button x:Name="TransferHideBtn" Click="TransferHide_Click"
                                 Width="32" Height="32" CornerRadius="16" Padding="0" VerticalAlignment="Center"
-                                ToolTipService.ToolTip="Hide (keeps running)">
+                                ToolTipService.ToolTip="Hide (keeps running)" AutomationProperties.Name="Hide">
                             <FontIcon Glyph="&#xE921;" FontFamily="Segoe Fluent Icons" FontSize="12" />
                         </Button>
                         <Button x:Name="TransferCancelBtn" Click="TransferCancel_Click"
                                 Width="32" Height="32" CornerRadius="16" Padding="0" VerticalAlignment="Center"
-                                ToolTipService.ToolTip="Cancel">
+                                ToolTipService.ToolTip="Cancel" AutomationProperties.Name="Cancel">
                             <FontIcon Glyph="&#xE711;" FontFamily="Segoe Fluent Icons" FontSize="12" />
                         </Button>
                     </StackPanel>
                 </Grid>
-                <Grid x:Name="TransferBarTrack" Height="6" CornerRadius="3" Background="#30808080"
-                      SizeChanged="TransferBarTrack_SizeChanged">
-                    <Border x:Name="TransferBarFill" HorizontalAlignment="Left" Width="0" CornerRadius="3">
-                        <Border.Background>
-                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                <GradientStop Color="#6EA8FF" Offset="0" />
-                                <GradientStop Color="#5A8AE0" Offset="1" />
-                            </LinearGradientBrush>
-                        </Border.Background>
-                    </Border>
-                </Grid>
+                <!-- A real ProgressBar: themes with the accent color (the old hand-drawn bar kept its
+                     hardcoded blue under the Terminal/Gray themes) and exposes RangeValue to UIA. -->
+                <ProgressBar x:Name="TransferBar" Height="6" Minimum="0" Maximum="1"
+                             AutomationProperties.Name="Transfer progress" />
                 <Grid ColumnDefinitions="*,Auto">
-                    <TextBlock x:Name="TransferStats" Text="" FontSize="11" Opacity="0.6" VerticalAlignment="Center" />
+                    <TextBlock x:Name="TransferStats" Text="" FontSize="11" Opacity="0.6" VerticalAlignment="Center"
+                               AutomationProperties.LiveSetting="Polite" />
                     <TextBlock x:Name="TransferEta" Grid.Column="1" Text="" FontSize="11" Opacity="0.6"
                                VerticalAlignment="Center" TextAlignment="Right" />
                 </Grid>
