@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -183,7 +184,8 @@ public sealed class Vault : IShareSource
     internal async Task OpenWithDekAsync(byte[] dek)
     {
         _dek = dek;
-        _index = LoadIndex();
+        try { _index = LoadIndex(); }
+        catch { VaultCrypto.Wipe(_dek); _dek = null; throw; } // don't stay half-open on a bad index
         await DecryptAllToWorkingAsync();
     }
 
@@ -239,18 +241,27 @@ public sealed class Vault : IShareSource
     public async Task LockAsync()
     {
         if (_dek is null) return;
+        await _syncGate.WaitAsync();
         try
         {
-            await _syncGate.WaitAsync();
-            try { await SyncWorkingToBlobsAsync(); }
-            finally { _syncGate.Release(); }
+            // Same safety net as FlushAsync: if the working folder transiently enumerates empty while
+            // the index still has entries, committing would wipe every blob — skip the sync and just
+            // tear down (the encrypted store already holds everything since the last flush).
+            var transientlyEmpty = _index.Entries.Count > 0 && WorkingDir is not null
+                && Directory.Exists(WorkingDir)
+                && !Directory.EnumerateFiles(WorkingDir, "*", SearchOption.AllDirectories).Any();
+            if (transientlyEmpty)
+                App.LogInfo("Vault lock: working folder empty but index is not; skipping commit to avoid wiping the index.");
+            else
+                await SyncWorkingToBlobsAsync();
         }
-        finally
-        {
-            if (WorkingDir is not null) { VaultCrypto.WipeDirectory(WorkingDir); WorkingDir = null; }
-            VaultCrypto.Wipe(_dek);
-            _dek = null;
-        }
+        finally { _syncGate.Release(); }
+
+        // Tear down only after a successful commit — if the sync threw, the working copy and DEK stay
+        // intact so the caller can retry or warn instead of losing everything since the last flush.
+        if (WorkingDir is not null) { VaultCrypto.WipeDirectory(WorkingDir); WorkingDir = null; }
+        VaultCrypto.Wipe(_dek);
+        _dek = null;
     }
 
     /// <summary>Commits the working folder back to the encrypted blobs/index <b>without</b> locking — so
@@ -262,9 +273,9 @@ public sealed class Vault : IShareSource
         await _syncGate.WaitAsync();
         try
         {
-            // Safety net: never let an AUTOMATIC commit wipe the whole index because the working folder
-            // momentarily appears empty (a transient/bug is far likelier than the user deleting everything).
-            // A real "delete all" is still committed by the explicit lock.
+            // Safety net: never let a commit wipe the whole index because the working folder
+            // momentarily appears empty (a transient/bug is far likelier than the user deleting
+            // everything). The lock path applies the same guard.
             if (_index.Entries.Count > 0 && Directory.Exists(WorkingDir)
                 && !Directory.EnumerateFiles(WorkingDir, "*", SearchOption.AllDirectories).Any())
                 return;
@@ -297,32 +308,41 @@ public sealed class Vault : IShareSource
     {
         if (_dek is null) throw new InvalidOperationException("Vault is locked.");
         var sources = paths.ToList();
+        var imported = new List<string>(); // only fully-imported sources are eligible for deletion
         int count = 0;
 
         foreach (var p in sources)
         {
-            if (Directory.Exists(p))
+            try
             {
-                var baseName = Path.GetFileName(p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-                foreach (var f in Directory.EnumerateFiles(p, "*", SearchOption.AllDirectories))
+                if (Directory.Exists(p))
                 {
-                    var rel = baseName + "/" + Path.GetRelativePath(p, f).Replace(Path.DirectorySeparatorChar, '/');
-                    await ImportSingleAsync(f, rel);
+                    var baseName = Path.GetFileName(p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                    foreach (var f in Directory.EnumerateFiles(p, "*", SearchOption.AllDirectories))
+                    {
+                        var rel = baseName + "/" + Path.GetRelativePath(p, f).Replace(Path.DirectorySeparatorChar, '/');
+                        await ImportSingleAsync(f, rel);
+                        count++;
+                    }
+                    imported.Add(p);
+                }
+                else if (File.Exists(p))
+                {
+                    await ImportSingleAsync(p, Path.GetFileName(p));
                     count++;
+                    imported.Add(p);
                 }
             }
-            else if (File.Exists(p))
-            {
-                await ImportSingleAsync(p, Path.GetFileName(p));
-                count++;
-            }
+            catch { /* skip this source; continue with the rest */ }
         }
 
         SaveIndex();
 
         if (deleteOriginals)
         {
-            foreach (var p in sources)
+            // Delete only sources whose import fully succeeded — never wipe an original that
+            // isn't safely in the vault.
+            foreach (var p in imported)
             {
                 if (Directory.Exists(p)) VaultCrypto.WipeDirectory(p);
                 else if (File.Exists(p)) VaultCrypto.OverwriteAndDelete(p);
@@ -356,6 +376,7 @@ public sealed class Vault : IShareSource
     {
         if (_dek is null || WorkingDir is null) throw new InvalidOperationException("Vault is not unlocked.");
         var sources = paths.ToList();
+        var imported = new List<string>(); // only fully-imported sources are eligible for deletion
         var added = 0;
 
         await _syncGate.WaitAsync(); // don't race a concurrent flush mutating/iterating the index
@@ -374,11 +395,13 @@ public sealed class Vault : IShareSource
                             await AddOneToOpenAsync(f, rel);
                             added++;
                         }
+                        imported.Add(p);
                     }
                     else if (File.Exists(p))
                     {
                         await AddOneToOpenAsync(p, Path.GetFileName(p));
                         added++;
+                        imported.Add(p);
                     }
                 }
                 catch { /* skip this source; continue with the rest */ }
@@ -390,7 +413,9 @@ public sealed class Vault : IShareSource
 
         if (deleteOriginals)
         {
-            foreach (var p in sources)
+            // Delete only sources whose import fully succeeded — never wipe an original that
+            // isn't safely in the vault.
+            foreach (var p in imported)
             {
                 if (Directory.Exists(p)) VaultCrypto.WipeDirectory(p);
                 else if (File.Exists(p)) VaultCrypto.OverwriteAndDelete(p);
@@ -404,6 +429,16 @@ public sealed class Vault : IShareSource
         rel = UniqueRel(rel);
         var dest = Path.Combine(WorkingDir!, rel.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+
+        // UniqueRel dedupes only against the index; a same-named file may still sit in the live
+        // working folder (not yet committed), which would make the mirror copy throw and abort the
+        // import. Pick a unique on-disk name and keep rel in agreement with it.
+        var unique = UniqueFsPath(dest);
+        if (!string.Equals(unique, dest, StringComparison.Ordinal))
+        {
+            dest = unique;
+            rel = Path.GetRelativePath(WorkingDir!, dest).Replace(Path.DirectorySeparatorChar, '/');
+        }
 
         // Mirror into the working folder (preserves the source timestamp so the lock-time sync sees it
         // as unchanged and keeps the blob we write below rather than re-encrypting).
@@ -432,19 +467,35 @@ public sealed class Vault : IShareSource
         VaultCrypto.WipeDirectory(work); // clear any stale copy first
         Directory.CreateDirectory(work);
         SetRestrictiveAcl(work);
+        WorkingDir = work; // own the folder immediately so a mid-decrypt failure can't orphan plaintext
 
-        foreach (var e in _index.Entries)
+        try
         {
-            var dest = Path.Combine(work, e.RelPath.Replace('/', Path.DirectorySeparatorChar));
-            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-            var blob = Path.Combine(BlobsDir, e.BlobId + ".blob");
-            if (!File.Exists(blob)) continue;
-            using (var inp = File.OpenRead(blob))
-            using (var outp = File.Create(dest))
-                await VaultCrypto.DecryptStreamAsync(_dek!, inp, outp, VaultCrypto.BlobContext(e.BlobId));
-            try { File.SetLastWriteTimeUtc(dest, new DateTime(e.ModifiedUtcTicks, DateTimeKind.Utc)); } catch { }
+            foreach (var e in _index.Entries)
+            {
+                var dest = Path.Combine(work, e.RelPath.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                var blob = Path.Combine(BlobsDir, e.BlobId + ".blob");
+                if (!File.Exists(blob)) continue;
+                using (var inp = File.OpenRead(blob))
+                using (var outp = File.Create(dest))
+                    await VaultCrypto.DecryptStreamAsync(_dek!, inp, outp, VaultCrypto.BlobContext(e.BlobId));
+                try { File.SetLastWriteTimeUtc(dest, new DateTime(e.ModifiedUtcTicks, DateTimeKind.Utc)); } catch { }
+            }
         }
-        WorkingDir = work;
+        catch (Exception ex)
+        {
+            // Never leave plaintext behind or the vault half-open after a failed decrypt.
+            VaultCrypto.WipeDirectory(work);
+            WorkingDir = null;
+            VaultCrypto.Wipe(_dek);
+            _dek = null;
+            // A corrupt content blob is NOT a wrong passphrase (the keyslot already unwrapped) —
+            // surface it distinctly so callers don't count it as a failed unlock attempt.
+            if (ex is CryptographicException)
+                throw new InvalidDataException("A vault file failed to decrypt (corrupt or tampered blob).", ex);
+            throw;
+        }
     }
 
     private async Task SyncWorkingToBlobsAsync()
@@ -551,7 +602,8 @@ public sealed class Vault : IShareSource
     /// <summary>Whether a remote viewer's writes can be applied right now (vault unlocked with a working folder).</summary>
     public bool CanWrite => _dek is not null && WorkingDir is not null && Directory.Exists(WorkingDir);
 
-    private readonly Dictionary<string, (string part, FileStream fs)> _uploads = new(StringComparer.OrdinalIgnoreCase);
+    // Concurrent: each connected peer serves uploads from its own task.
+    private readonly ConcurrentDictionary<string, (string part, FileStream fs)> _uploads = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Resolve a vault-relative path to a full path, rejecting anything that escapes the working
     /// folder (defends against "../" traversal from a remote peer).</summary>
@@ -594,16 +646,22 @@ public sealed class Vault : IShareSource
         if (!CanWrite) throw new InvalidOperationException("Vault is locked.");
         var full = SafeFull(rel);
         Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        var part = full + ".uploadpart";
+        // Per-upload unique temp name: two peers writing the same path must never share a part file.
+        var part = full + "." + Guid.NewGuid().ToString("N") + ".uploadpart";
         var fs = File.Create(part);
         try { File.SetAttributes(part, FileAttributes.Hidden); } catch { }
-        _uploads[rel] = (part, fs);
+        if (!_uploads.TryAdd(rel, (part, fs)))
+        {
+            try { fs.Dispose(); } catch { }
+            try { File.Delete(part); } catch { }
+            throw new InvalidOperationException("An upload to this path is already in progress.");
+        }
         return fs;
     }
 
     public void CommitUpload(string rel)
     {
-        if (!_uploads.Remove(rel, out var u)) return;
+        if (!_uploads.TryRemove(rel, out var u)) return;
         try { u.fs.Flush(true); } catch { }
         try { u.fs.Dispose(); } catch { }
         var dest = UniqueFsPath(SafeFull(rel));
@@ -613,7 +671,7 @@ public sealed class Vault : IShareSource
 
     public void AbortUpload(string rel)
     {
-        if (!_uploads.Remove(rel, out var u)) return;
+        if (!_uploads.TryRemove(rel, out var u)) return;
         try { u.fs.Dispose(); } catch { }
         try { File.Delete(u.part); } catch { }
     }
@@ -624,8 +682,9 @@ public sealed class Vault : IShareSource
         if (!_shareMap.TryGetValue(id, out var path)) { ShareEntries(); _shareMap.TryGetValue(id, out path); }
         if (path is null) return;
         var full = SafeFull(Path.GetRelativePath(WorkingDir!, path));
-        if (File.Exists(full)) { try { File.SetAttributes(full, FileAttributes.Normal); } catch { } File.Delete(full); }
-        else if (Directory.Exists(full)) Directory.Delete(full, recursive: true);
+        // Deleted vault plaintext must not linger in free space — overwrite before deleting.
+        if (File.Exists(full)) { try { File.SetAttributes(full, FileAttributes.Normal); } catch { } VaultCrypto.OverwriteAndDelete(full); }
+        else if (Directory.Exists(full)) VaultCrypto.WipeDirectory(full);
     }
 
     // ---------- Helpers ----------

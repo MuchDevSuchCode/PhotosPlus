@@ -121,19 +121,31 @@ public sealed partial class MainWindow
         var shape = RasterizePolygon(poly, w, h);
         _lasso.Clear();   // committed — from here the tinted mask overlay IS the selection's visual
 
-        var old = _selMask is { } m && m.Length == shape.Length ? m : null;
-        switch (_lassoCombine)
+        var combine = _lassoCombine;
+        var old = _selMask;
+        if (old is not null && old.Length != shape.Length)
+        {
+            // The kept mask was sized to different pixels (an upscale/undo changed them since) — combining
+            // with it would corrupt, so drop it, say so, and let this stroke start a fresh selection.
+            ClearSelection();
+            AiSay("The previous selection no longer matched the image — starting a new selection.");
+            old = null;
+            combine = "new";
+        }
+        switch (combine)
         {
             case "add" when old is not null:
                 for (var i = 0; i < shape.Length; i++) if (old[i] != 0) shape[i] = 255;
                 break;
             case "subtract":
-                if (old is null) { SetSelection(null, 0, 0); return; }   // nothing to subtract from
+                if (old is null) { ClearSelection(); AiSay("Nothing to subtract from."); return; }
                 var cut = (byte[])old.Clone();
                 for (var i = 0; i < shape.Length; i++) if (shape[i] != 0) cut[i] = 0;
                 shape = cut;
                 break;
-            case "intersect" when old is not null:
+            case "intersect":
+                // Photoshop semantics: intersecting with no prior selection yields nothing, not a new one.
+                if (old is null) { ClearSelection(); AiSay("No pixels selected."); return; }
                 for (var i = 0; i < shape.Length; i++) shape[i] = (byte)(old[i] != 0 && shape[i] != 0 ? 255 : 0);
                 break;
         }
@@ -154,6 +166,7 @@ public sealed partial class MainWindow
 
         SetAiBusy(true);
         _aiCts = new CancellationTokenSource();
+        var gen = _aiGeneration;
         try
         {
             var pixels = _editor.GetSourcePixels(0, out var w, out var h);
@@ -163,6 +176,10 @@ public sealed partial class MainWindow
             var ct = _aiCts.Token;
             var regions = 0;
             var mask = await Task.Run(() => TextDetect.DetectMask(engine, pixels, w, h, out regions, ct), ct);
+
+            // The editor loaded a different photo, or closed, while detection ran — installing this mask
+            // would select photo A's text on photo B.
+            if (gen != _aiGeneration || _editor.Source is null) return;
 
             if (mask is null)
             {

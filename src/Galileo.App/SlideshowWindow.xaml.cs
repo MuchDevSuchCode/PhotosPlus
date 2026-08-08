@@ -30,6 +30,7 @@ public sealed partial class SlideshowWindow : Window
     private int _seconds;
     private bool _paused;
     private bool _showingA = true;    // which Image element is currently in front
+    private int _slideToken;          // rapid navigation: only the newest load may install its bitmap
 
     public SlideshowWindow(List<PhotoItem> photos, int startIndex, AppState state)
     {
@@ -57,6 +58,9 @@ public sealed partial class SlideshowWindow : Window
 
         _hideControlsTimer.Interval = TimeSpan.FromSeconds(3);
         _hideControlsTimer.Tick += (_, _) => { _hideControlsTimer.Stop(); SetChromeVisible(false); };
+
+        // DispatcherTimers root themselves while running — left ticking, they keep the closed window alive.
+        Closed += (_, _) => { _advanceTimer.Stop(); _hideControlsTimer.Stop(); };
 
         UpdateSpeedText();
         Root.Loaded += OnRootLoaded;
@@ -100,8 +104,10 @@ public sealed partial class SlideshowWindow : Window
 
     private async System.Threading.Tasks.Task ShowAtAsync(int pos, bool animate)
     {
+        var t = ++_slideToken;
         var photo = _photos[_order[pos]];
         var bmp = await LoadAsync(photo);
+        if (t != _slideToken) return; // a newer slide won the race — installing this one would flash backwards
         if (bmp is null) return;
 
         // Incoming goes to the back element; we then crossfade roles.
@@ -137,8 +143,24 @@ public sealed partial class SlideshowWindow : Window
         try
         {
             var file = await StorageFile.GetFileFromPathAsync(photo.Path);
-            using var stream = await file.OpenReadAsync();
             var bmp = new BitmapImage();
+            // Same cap as the main viewer: decoding a panorama/huge screenshot at full resolution can
+            // exceed the GPU's max texture size and crash the render thread. 8000px is well under the
+            // ~16384 D3D limit and still sharp for a fullscreen slide.
+            const uint maxSide = 8000;
+            try
+            {
+                var props = await file.Properties.GetImagePropertiesAsync();
+                uint w = props.Width, h = props.Height;
+                if (w > 0 && h > 0 && Math.Max(w, h) > maxSide)
+                {
+                    bmp.DecodePixelType = DecodePixelType.Logical;
+                    if (w >= h) bmp.DecodePixelWidth = (int)maxSide;
+                    else bmp.DecodePixelHeight = (int)maxSide;
+                }
+            }
+            catch { } // no properties (odd format) → decode as-is
+            using var stream = await file.OpenReadAsync();
             await bmp.SetSourceAsync(stream);
             return bmp;
         }
@@ -210,6 +232,10 @@ public sealed partial class SlideshowWindow : Window
     {
         _paused = !_paused;
         if (_paused) _advanceTimer.Stop(); else RestartAdvanceTimer();
+        // Tooltip and accessible name must track the glyph, or the button announces the wrong action.
+        var label = _paused ? "Play (Space)" : "Pause (Space)";
+        ToolTipService.SetToolTip(PlayBtn, label);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(PlayBtn, label);
         PlayIcon.Glyph = _paused ? "" : "";  // Play / Pause
     }
 

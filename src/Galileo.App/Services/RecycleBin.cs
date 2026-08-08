@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Galileo.Models;
 
@@ -33,6 +34,27 @@ public sealed class RecycleBin
     private static string IndexPath => Path.Combine(Root, "index.json");
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
     private readonly object _lock = new();
+    private const string MutexName = "Galileo.RecycleBin";
+
+    // Cross-process guard for load → mutate → save sequences on index.json (two Galileo instances
+    // share the same bin). Throws TimeoutException if another process wedges the bin.
+    private static IDisposable AcquireIndexMutex()
+    {
+        var m = new Mutex(initiallyOwned: false, MutexName);
+        try
+        {
+            if (!m.WaitOne(TimeSpan.FromSeconds(10))) { m.Dispose(); throw new TimeoutException("Recycle bin index is busy."); }
+        }
+        catch (AbandonedMutexException) { /* previous holder died — the mutex is ours now */ }
+        return new MutexReleaser(m);
+    }
+
+    private sealed class MutexReleaser : IDisposable
+    {
+        private readonly Mutex _m;
+        public MutexReleaser(Mutex m) => _m = m;
+        public void Dispose() { try { _m.ReleaseMutex(); } catch { } _m.Dispose(); }
+    }
 
     /// <summary>Stored file path: GUID + original extension (so previews/open by extension still work).</summary>
     public string StorePathOf(RecycleEntry e) =>
@@ -49,11 +71,16 @@ public sealed class RecycleBin
     {
         lock (_lock)
         {
-            var list = Load();
-            list.RemoveAll(e => { var p = StorePathOf(e); return !File.Exists(p) && !Directory.Exists(p); });
-            Save(list);
-            if (list.Count == 0)
-                try { foreach (var f in Directory.EnumerateFileSystemEntries(StoreDir)) TryRemove(f); } catch { }
+            try
+            {
+                using var gate = AcquireIndexMutex();
+                var list = Load();
+                list.RemoveAll(e => { var p = StorePathOf(e); return !File.Exists(p) && !Directory.Exists(p); });
+                Save(list);
+                // Store files with no index record are left alone — another process may be mid-add,
+                // so purging "orphans" here could destroy a just-binned item.
+            }
+            catch { }
         }
     }
 
@@ -64,32 +91,51 @@ public sealed class RecycleBin
         return new();
     }
 
+    // Atomic index write: serialize to index.json.tmp, then swap it into place. Throws on failure so
+    // callers can react (a silently lost index would orphan store files).
     private void Save(List<RecycleEntry> entries)
     {
-        try { Directory.CreateDirectory(Root); File.WriteAllText(IndexPath, JsonSerializer.Serialize(entries, Json)); }
-        catch { }
+        Directory.CreateDirectory(Root);
+        var tmp = IndexPath + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(entries, Json));
+        if (File.Exists(IndexPath)) File.Replace(tmp, IndexPath, destinationBackupFileName: null);
+        else File.Move(tmp, IndexPath);
     }
 
-    /// <summary>Moves a file/folder into the bin (recoverable). Returns false if the path is gone.</summary>
+    /// <summary>Moves a file/folder into the bin (recoverable). Returns false if the path is gone
+    /// or the bin could not record it.</summary>
     public bool MoveToBin(string path)
     {
         lock (_lock)
         {
-            var isDir = Directory.Exists(path);
-            if (!isDir && !File.Exists(path)) return false;
-            Directory.CreateDirectory(StoreDir);
+            try
+            {
+                using var gate = AcquireIndexMutex();
+                var isDir = Directory.Exists(path);
+                if (!isDir && !File.Exists(path)) return false;
+                Directory.CreateDirectory(StoreDir);
 
-            var name = Path.GetFileName(path.TrimEnd('\\', '/'));
-            var id = Guid.NewGuid().ToString("N");
-            var dest = Path.Combine(StoreDir, id + (isDir ? "" : Path.GetExtension(name)));
-            long size = 0;
-            try { size = isDir ? DirSize(path) : new FileInfo(path).Length; } catch { }
+                var name = Path.GetFileName(path.TrimEnd('\\', '/'));
+                var id = Guid.NewGuid().ToString("N");
+                var dest = Path.Combine(StoreDir, id + (isDir ? "" : Path.GetExtension(name)));
+                long size = 0;
+                try { size = isDir ? DirSize(path) : new FileInfo(path).Length; } catch { }
 
-            MoveAny(path, dest, isDir);
-            var list = Load();
-            list.Add(new RecycleEntry { Id = id, OriginalPath = path, Name = name, IsFolder = isDir, Size = size, DeletedUtc = DateTime.UtcNow });
-            Save(list);
-            return true;
+                // Record the entry BEFORE moving: if we crash mid-move the index at worst points at
+                // a missing store file (RemoveMissing tidies that), never at an untracked orphan.
+                var list = Load();
+                list.Add(new RecycleEntry { Id = id, OriginalPath = path, Name = name, IsFolder = isDir, Size = size, DeletedUtc = DateTime.UtcNow });
+                Save(list);
+                try { MoveAny(path, dest, isDir); }
+                catch
+                {
+                    list.RemoveAll(x => x.Id == id);
+                    try { Save(list); } catch { }
+                    return false;
+                }
+                return true;
+            }
+            catch { return false; }
         }
     }
 
@@ -112,20 +158,25 @@ public sealed class RecycleBin
         restoredTo = "";
         lock (_lock)
         {
-            var list = Load();
-            var e = list.FirstOrDefault(x => string.Equals(StorePathOf(x), storePath, StringComparison.OrdinalIgnoreCase));
-            if (e is null) return false;
             try
             {
-                var dest = UniquePath(e.OriginalPath, e.IsFolder);
-                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                MoveAny(storePath, dest, e.IsFolder);
-                restoredTo = dest;
+                using var gate = AcquireIndexMutex();
+                var list = Load();
+                var e = list.FirstOrDefault(x => string.Equals(StorePathOf(x), storePath, StringComparison.OrdinalIgnoreCase));
+                if (e is null) return false;
+                try
+                {
+                    var dest = UniquePath(e.OriginalPath, e.IsFolder);
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                    MoveAny(storePath, dest, e.IsFolder);
+                    restoredTo = dest;
+                }
+                catch { return false; }
+                list.Remove(e);
+                try { Save(list); } catch { /* stale entry; RemoveMissing will drop it */ }
+                return true;
             }
             catch { return false; }
-            list.Remove(e);
-            Save(list);
-            return true;
         }
     }
 
@@ -136,7 +187,11 @@ public sealed class RecycleBin
         lock (_lock) { e = Load().FirstOrDefault(x => string.Equals(StorePathOf(x), storePath, StringComparison.OrdinalIgnoreCase)); }
         if (e is null) return;
         await SecureWipe.WipePathAsync(storePath, method);
-        lock (_lock) { var list = Load(); list.RemoveAll(x => x.Id == e.Id); Save(list); }
+        lock (_lock)
+        {
+            try { using var gate = AcquireIndexMutex(); var list = Load(); list.RemoveAll(x => x.Id == e.Id); Save(list); }
+            catch { }
+        }
     }
 
     /// <summary>Empties the bin, secure-wiping every item with the chosen method.</summary>
@@ -147,8 +202,13 @@ public sealed class RecycleBin
         foreach (var e in list) await SecureWipe.WipePathAsync(StorePathOf(e), method, progress);
         lock (_lock)
         {
-            Save(new List<RecycleEntry>());
-            try { foreach (var f in Directory.EnumerateFileSystemEntries(StoreDir)) TryRemove(f); } catch { }
+            try
+            {
+                using var gate = AcquireIndexMutex();
+                Save(new List<RecycleEntry>());
+                try { foreach (var f in Directory.EnumerateFileSystemEntries(StoreDir)) TryRemove(f); } catch { }
+            }
+            catch { }
         }
     }
 

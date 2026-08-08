@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Galileo.Models;
@@ -220,29 +221,52 @@ public sealed partial class MainWindow
         _selOverlay = null;
         _selMask = null;
         try { _editor.Unload(); } catch { }
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
+        // The big buffers (undo pixels, denoise pair, editor bitmaps) are already unrooted above. A
+        // background hint reclaims them without blocking the UI thread — WaitForPendingFinalizers here
+        // can deadlock against WinRT finalizers that must marshal back to this STA thread.
+        GC.Collect(2, GCCollectionMode.Optimized, blocking: false);
 
         if (reloadViewer) _ = LoadCurrentAsync();
 
         // Leaving the editor must land the user back on THIS window's viewer. Saving over the original
         // reshuffles the main explorer window's list (same process, same UI thread), which can pull the
         // foreground to it — re-assert activation so the viewer the user was working in stays on top.
-        // Skipped when the window is closing (activating a dying window just flashes it).
+        // Skipped when the window is closing (activating a dying window just flashes it), and skipped
+        // whenever the foreground belongs to ANOTHER process — the user Alt-Tabbed away, and reclaiming
+        // focus from a different app would be focus stealing, not restoration.
         if (activateWindow)
         {
-            try { Activate(); } catch { }
+            if (ForegroundIsThisProcess()) { try { Activate(); } catch { } }
             // The explorer refresh is debounced (~400ms after the file lands) and can steal focus AFTER
             // we exit — re-assert once more after it has had its turn.
             var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
             t.Tick += (_, _) =>
             {
                 t.Stop();
-                if (Visible) { try { Activate(); } catch { } }
+                if (Visible && ForegroundIsThisProcess()) { try { Activate(); } catch { } }
             };
             t.Start();
         }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    /// <summary>True when the current foreground window belongs to this process — the only case where
+    /// re-asserting activation is shuffling focus between our own windows rather than stealing it.</summary>
+    private static bool ForegroundIsThisProcess()
+    {
+        try
+        {
+            var fg = GetForegroundWindow();
+            if (fg == IntPtr.Zero) return false;
+            _ = GetWindowThreadProcessId(fg, out var pid);
+            return pid == (uint)Environment.ProcessId;
+        }
+        catch { return false; }
     }
 
     /// <summary>True when the editor holds work that isn't on disk: any adjustment/crop/filter, any markup,
@@ -431,6 +455,11 @@ public sealed partial class MainWindow
         }
     }
 
+    // Draw runs at pointer-move frequency; allocating (and leaking — they're IDisposable) a text format
+    // per frame churns the GPU device. Shared instances, mutated only on the UI thread that draws.
+    private static readonly CanvasTextFormat CompareLabelFormat = new() { FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+    private static readonly CanvasTextFormat MarkupTextFormat = new();
+
     /// <summary>Draws the pristine image against the edited one. "before" is put through the same geometry
     /// (and scaled to the current source size) so the two line up even after an AI upscale.</summary>
     private void DrawCompare(CanvasDrawingSession ds, ICanvasImage after, Rect src,
@@ -440,7 +469,7 @@ public sealed partial class MainWindow
         try { before = _editor.BuildBeforeOriented(_edit, out _); }
         catch { ds.DrawImage(after, new Rect(ox, oy, dw, dh), src); return; }
 
-        var label = new CanvasTextFormat { FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+        var label = CompareLabelFormat;
 
         void Tag(string text, double x, double y)
         {
@@ -538,7 +567,8 @@ public sealed partial class MainWindow
                 ds.DrawLine(ex, ey, (float)(ex - head * Math.Cos(ang + 0.5)), (float)(ey - head * Math.Sin(ang + 0.5)), col, th);
                 break;
             case MarkupKind.Text:
-                ds.DrawText(m.Text, sx, sy, col, new CanvasTextFormat { FontSize = (float)Math.Max(6, m.FontSize * sc) });
+                MarkupTextFormat.FontSize = (float)Math.Max(6, m.FontSize * sc);
+                ds.DrawText(m.Text, sx, sy, col, MarkupTextFormat);
                 break;
         }
     }
@@ -758,7 +788,9 @@ public sealed partial class MainWindow
             {
                 Kind = Enum.Parse<MarkupKind>(_markupTool),
                 Start = p, End = p, Color = SelectedMarkupColor(),
-                Thickness = 4 / Math.Max(0.0001, _editFitScale),
+                // Stored in image space, so the default must come from the image's own size — deriving it
+                // from the current zoom would bake that zoom into the shape permanently.
+                Thickness = Math.Max(2.0, _orientedW / 400.0),
             };
             if (_pendingShape.Kind == MarkupKind.Pen) _pendingShape.Points.Add(p);
             OverlayCanvas.CapturePointer(e.Pointer);
@@ -955,7 +987,8 @@ public sealed partial class MainWindow
         _markup.Add(new MarkupItem
         {
             Kind = MarkupKind.Text, Start = at, End = at, Text = box.Text,
-            Color = SelectedMarkupColor(), FontSize = 28 / Math.Max(0.0001, _editFitScale),
+            // Image-space size derived from the image, not the current zoom (see _pendingShape.Thickness).
+            Color = SelectedMarkupColor(), FontSize = Math.Max(14.0, _orientedW / 80.0),
         });
         _editCanvas?.Invalidate();
     }
@@ -1185,6 +1218,7 @@ public sealed partial class MainWindow
         if (_editor.SourceModified) PushUndoPixels(); else PushUndo();
         _editor.RevertToOriginal();
         InvalidateLiveDenoise();
+        ClearSelection();   // reverting an AI upscale changes the pixel size — a kept mask would be stale
         _edit = new EditState();
         _markup.Clear();
         ResetEditSliders();
@@ -1290,6 +1324,9 @@ public sealed partial class MainWindow
         var tmp = System.IO.Path.Combine(dir, System.IO.Path.GetFileNameWithoutExtension(path) + ".galileo-tmp" + ext);
         if (!await ExportToAsync(tmp))
         {
+            // A failed export can leave a partial temp file behind — with its real extension, it would
+            // list as a broken photo.
+            try { if (System.IO.File.Exists(tmp)) System.IO.File.Delete(tmp); } catch { }
             // The viewer's image was released to free the file lock; a failed export must put it back or the
             // viewer behind the editor stays permanently blank.
             _ = LoadCurrentAsync();

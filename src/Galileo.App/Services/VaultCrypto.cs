@@ -264,12 +264,34 @@ public static class VaultCrypto
     public static void WipeDirectory(string dir)
     {
         if (!Directory.Exists(dir)) return;
+        if (HasReparsePoint(dir)) { try { Directory.Delete(dir, false); } catch { /* ignore */ } return; }
+        WipeDirectoryCore(dir);
+        try { Directory.Delete(dir, true); } catch { /* ignore */ }
+    }
+
+    // Walks the tree without following reparse points (junctions/symlinks), so a link inside the
+    // vault can never cause its TARGET to be overwritten; links are deleted as bare links instead.
+    private static void WipeDirectoryCore(string dir)
+    {
         try
         {
-            foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
-                OverwriteAndDelete(f);
+            foreach (var f in Directory.EnumerateFiles(dir))
+            {
+                if (HasReparsePoint(f)) { try { File.Delete(f); } catch { /* ignore */ } }
+                else OverwriteAndDelete(f);
+            }
+            foreach (var d in Directory.EnumerateDirectories(dir))
+            {
+                if (HasReparsePoint(d)) { try { Directory.Delete(d, false); } catch { /* ignore */ } }
+                else WipeDirectoryCore(d);
+            }
         }
         catch { /* continue to the directory removal */ }
-        try { Directory.Delete(dir, true); } catch { /* ignore */ }
+    }
+
+    private static bool HasReparsePoint(string path)
+    {
+        try { return File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint); }
+        catch { return true; } // can't inspect → treat as a link so we never overwrite a target
     }
 }

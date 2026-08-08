@@ -45,7 +45,7 @@ public partial class ExplorerItem : ObservableObject
     public bool IsFolder => Kind != ExplorerItemKind.File;
     public long Size { get; }
     public DateTime Modified { get; }
-    public string TypeName { get; }
+    public string TypeName { get; private set; }
 
     [ObservableProperty] private bool _isAppHidden;
     [ObservableProperty] private ImageSource? _icon;
@@ -78,12 +78,21 @@ public partial class ExplorerItem : ObservableObject
     }
 
     /// <summary>Adopts the item's new path after an on-disk rename, updating the displayed name in
-    /// place — the object (and its loaded icon) survives, so the list needn't reload or flicker.</summary>
+    /// place — the object (and its loaded icon) survives, so the list needn't reload or flicker.
+    /// An extension change is a TYPE change: the type name and icon are refreshed then.</summary>
     public void Rename(string newPath)
     {
+        var extChanged = Kind == ExplorerItemKind.File && !string.Equals(
+            System.IO.Path.GetExtension(Path), System.IO.Path.GetExtension(newPath), StringComparison.OrdinalIgnoreCase);
         Path = newPath;
         Name = Kind == ExplorerItemKind.Drive ? newPath : System.IO.Path.GetFileName(newPath);
         if (string.IsNullOrEmpty(Name)) Name = newPath;
+        if (extChanged)
+        {
+            TypeName = FileSystemService.TypeName(System.IO.Path.GetExtension(newPath));
+            OnPropertyChanged(nameof(TypeName));
+            ResetIcon(); // the old glyph/thumbnail belongs to the old type
+        }
         OnPropertyChanged(nameof(Path));
         OnPropertyChanged(nameof(Name));
         OnPropertyChanged(nameof(DisplayName));

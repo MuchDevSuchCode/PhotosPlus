@@ -139,6 +139,23 @@ public sealed class GoogleDriveBackup
     {
         EnsureConnected();
         var folderId = await FindFolderAsync(v.Id, await EnsureRootAsync()) ?? await CreateFolderAsync(v.Id, await EnsureRootAsync());
+
+        // A concurrent vault flush can delete/replace blobs after we snapshot the list. If a blob
+        // vanishes mid-upload, retry the whole snapshot+upload once from scratch; and because the
+        // index is only uploaded after every blob made it up, an aborted pass never publishes an
+        // index that references blobs missing from the backup.
+        try
+        {
+            await BackupOnceAsync(v, folderId, progress);
+        }
+        catch (IOException ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            await BackupOnceAsync(v, folderId, progress);
+        }
+    }
+
+    private async Task BackupOnceAsync(Vault v, string folderId, IProgress<string>? progress)
+    {
         var remote = await ListChildrenAsync(folderId);
 
         var blobsDir = BlobsDir(v);
@@ -152,10 +169,12 @@ public sealed class GoogleDriveBackup
             keep.Add(name);
             progress?.Report($"Uploading files… {++i}/{localBlobs.Length}");
             if (remote.ContainsKey(name)) continue; // blobs are immutable — already backed up
-            using var s = File.OpenRead(blob);
+            using var s = File.OpenRead(blob); // FileNotFoundException here → caller retries once
             await UploadAsync(folderId, name, s, existingId: null);
         }
 
+        // The index/manifest go up LAST, only after every blob upload succeeded — a failed blob
+        // upload throws out of the loop above and leaves the previous remote index intact.
         progress?.Report("Uploading index…");
         using (var s = File.OpenRead(IndexPath(v)))
             await UploadAsync(folderId, "index.enc", s, remote.GetValueOrDefault("index.enc"));
@@ -219,6 +238,9 @@ public sealed class GoogleDriveBackup
         var i = 0;
         foreach (var (name, id) in children)
         {
+            // Remote names come from Drive and could be tampered with — never let one escape the
+            // vault folder (path separators, drive colons, or '..' traversal are rejected).
+            if (!IsSafeRemoteName(name)) continue;
             progress?.Report($"Downloading files… {++i}/{children.Count}");
             var path = name.EndsWith(".blob", StringComparison.OrdinalIgnoreCase)
                 ? Path.Combine(dest, "blobs", name)
@@ -313,6 +335,12 @@ public sealed class GoogleDriveBackup
     }
 
     private static string Escape(string s) => s.Replace("\\", "\\\\").Replace("'", "\\'");
+
+    /// <summary>True when a remote file name is safe to combine into a local path.</summary>
+    private static bool IsSafeRemoteName(string name) =>
+        !string.IsNullOrWhiteSpace(name)
+        && name.IndexOfAny(new[] { '/', '\\', ':' }) < 0
+        && !name.Contains("..");
 
     // Vault store layout (keyed off the public Root).
     private static string ManifestPath(Vault v) => Path.Combine(v.Root, "vault.json");

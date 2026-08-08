@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -222,12 +223,68 @@ public sealed class AppState
         return new AppState();
     }
 
+    // Cross-process guard: "open in new window" can run as a second process sharing this file. A plain
+    // WriteAllText raced from two processes tears the JSON — and a torn file makes Load() fall back to
+    // a FRESH default state (every favorite/pin/pref gone). Atomic replace + mutex prevents the tear;
+    // concurrent writers still last-write-win on content, which loses far less than total corruption.
+    private static readonly System.Threading.Mutex SaveMutex = new(false, "Galileo.StateSave");
+
+    /// <summary>Re-keys every path-keyed setting after an on-disk rename so hidden flags, favorites,
+    /// chosen thumbnails, remembered sorts and pins follow the item to its new path — renaming a hidden
+    /// folder must not silently un-hide it (and a future folder at the old path must not inherit the
+    /// flag). Prefix-rewrites descendants of a renamed folder too.</summary>
+    public void RepathEntry(string oldPath, string newPath)
+    {
+        if (string.IsNullOrEmpty(oldPath) || string.IsNullOrEmpty(newPath)) return;
+        oldPath = oldPath.TrimEnd('\\');
+        newPath = newPath.TrimEnd('\\');
+
+        string? Map(string p) =>
+            p.Equals(oldPath, StringComparison.OrdinalIgnoreCase) ? newPath
+            : p.StartsWith(oldPath + "\\", StringComparison.OrdinalIgnoreCase) ? newPath + p[oldPath.Length..]
+            : null;
+
+        void RekeySet(HashSet<string> set)
+        {
+            foreach (var p in set.Where(p => Map(p) is not null).ToList()) { set.Remove(p); set.Add(Map(p)!); }
+        }
+        RekeySet(HiddenPaths);
+        RekeySet(FavoritePaths);
+        RekeySet(HiddenFolders);
+
+        foreach (var k in FolderThumbnails.Keys.Where(k => Map(k) is not null).ToList())
+        {
+            var v = FolderThumbnails[k]; FolderThumbnails.Remove(k); FolderThumbnails[Map(k)!] = v;
+        }
+        foreach (var k in FolderThumbnails.Keys.ToList())   // the VALUE is an image path — follow it too
+            if (Map(FolderThumbnails[k]) is { } nv) FolderThumbnails[k] = nv;
+
+        foreach (var k in FolderSorts.Keys.Where(k => Map(k) is not null).ToList())
+        {
+            var v = FolderSorts[k]; FolderSorts.Remove(k); FolderSorts[Map(k)!] = v;
+        }
+        for (var i = 0; i < PinnedPaths.Count; i++)
+            if (Map(PinnedPaths[i]) is { } np) PinnedPaths[i] = np;
+
+        Save();
+    }
+
     public void Save()
     {
         if (SuppressSave) return;
         try
         {
-            File.WriteAllText(StatePath, JsonSerializer.Serialize(this, Options));
+            var owned = false;
+            try { owned = SaveMutex.WaitOne(2000); }
+            catch (System.Threading.AbandonedMutexException) { owned = true; } // prior holder died — lock is ours
+            try
+            {
+                var tmp = StatePath + ".tmp";
+                File.WriteAllText(tmp, JsonSerializer.Serialize(this, Options));
+                if (File.Exists(StatePath)) File.Replace(tmp, StatePath, null);
+                else File.Move(tmp, StatePath);
+            }
+            finally { if (owned) SaveMutex.ReleaseMutex(); }
         }
         catch
         {

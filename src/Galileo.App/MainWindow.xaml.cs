@@ -80,7 +80,6 @@ public sealed partial class MainWindow : Window
     // round-trip and its RequestedOperation (cut vs copy) flag are unreliable in unpackaged apps, so we
     // also remember the paths + move intent here and prefer them when they match.
     private (List<string> Paths, bool Move)? _fileClip;
-    private bool _suppressClipChange; // ignore the ContentChanged caused by our own file copy/cut
 
     /// <summary>The secure-wipe method chosen in Settings (used for Empty / shred / Shift+Delete).</summary>
     private WipeMethod CurrentWipeMethod => SecureWipe.Parse(_state.WipeMethod);
@@ -101,7 +100,7 @@ public sealed partial class MainWindow : Window
     private readonly List<(string Label, string Exe)> _shells = new();
 
     // Secure vault state.
-    private readonly VaultManager _vaults = new();
+    private readonly VaultManager _vaults = App.Vaults; // process-wide — see App.Vaults
     private readonly GoogleDriveBackup _drive = new();
 
     // Scheduled vault backups: a periodic check runs a backup when one is overdue (see AppState.BackupSchedule).
@@ -277,9 +276,23 @@ public sealed partial class MainWindow : Window
 
         // When the clipboard changes from OUTSIDE Galileo (another app, or a text/image copy), drop our
         // in-app file clip so a later paste uses the new content — not a stale earlier file copy.
-        Clipboard.ContentChanged += (_, _) =>
+        // Compare CONTENT rather than counting events: SetContent can raise zero or several
+        // ContentChanged notifications, so a one-shot suppress flag either swallowed a real external
+        // copy (stale paste) or nulled our own clip (cut degraded to copy).
+        Clipboard.ContentChanged += async (_, _) =>
         {
-            if (_suppressClipChange) { _suppressClipChange = false; return; }
+            if (_fileClip is not { } fc) return;
+            try
+            {
+                var content = Clipboard.GetContent();
+                if (content.Contains(StandardDataFormats.StorageItems))
+                {
+                    var items = await content.GetStorageItemsAsync();
+                    var paths = items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
+                    if (SamePaths(paths, fc.Paths)) return; // still our clip — our own SetContent echoing
+                }
+            }
+            catch { return; } // clipboard busy/inaccessible — keep the in-app clip rather than guess
             _fileClip = null;
         };
         _appWindow.Closing += AppWindow_Closing;
@@ -359,7 +372,6 @@ public sealed partial class MainWindow : Window
         PopulateSidebar();
         PopulatePinned();
         PopulateDevices();
-        _shell.WipeTemp(); // clear any device temp copies left by a previous run
 
         // Secure vault: wipe any decrypted working folder left by a crash, list vaults, and arm the
         // idle auto-lock + app-exit lock. An "open in new window" window belongs to an already-running
@@ -368,12 +380,24 @@ public sealed partial class MainWindow : Window
         // does not consult the command line, which is the primary's and says nothing about this window.
         if (!_secondaryWindow && !LaunchedNewWindow())
         {
+            _shell.WipeTemp();            // device temp copies are process-wide — a guest must not wipe the primary's
             _vaults.WipeOrphanWorkDirs();
             ArchiveService.WipeOrphans(); // clear any leftover extracted-zip temp dirs from a prior run
             WipeShareTempDirs();          // clear any leftover remote-browse temp copies from a prior run
         }
-        VaultsList.ItemsSource = _vaultList;
-        RefreshVaults();
+        // Guest photo windows get no vault affordances at all: vault lifecycle (unlock/lock/share)
+        // belongs to the primary window, and offering it here invites concurrent unlocks of the same
+        // vault working folder.
+        if (_secondaryWindow || LaunchedNewWindow())
+        {
+            VaultsLockedEntry.Visibility = Visibility.Collapsed;
+            VaultsSection.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            VaultsList.ItemsSource = _vaultList;
+            RefreshVaults();
+        }
 
         // Watch for drives being mounted/removed and keep the UI in sync.
         _knownDrives = CurrentDriveSignature();
@@ -394,6 +418,10 @@ public sealed partial class MainWindow : Window
     /// in afterwards (off-thread, paths only — no thumbnails) so arrow-key / swipe navigation still works;
     /// they just don't block the image the user actually asked for.
     /// </summary>
+    /// <summary>Bumped whenever the photo pipeline (_allPhotos) is rebuilt, so a slow sibling backfill
+    /// from an EARLIER open can't clobber the pipeline of the photo now on screen.</summary>
+    private int _pipelineGen;
+
     private async void OpenViewerDirect(string path)
     {
         try
@@ -407,9 +435,12 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
+            var gen = ++_pipelineGen;
             _allPhotos.Clear();
             foreach (var p in _library.LoadFiles(new[] { path })) _allPhotos.Add(p);
-            _showHiddenAlbum = false;
+            // A photo in the Hidden album must open AS ITSELF: with the normal filter it would be
+            // excluded from _view and the viewer would silently show a different image (index 0).
+            _showHiddenAlbum = _allPhotos.Count > 0 && _allPhotos[0].IsHidden;
             _favoritesOnly = false;
             RefreshView();
             _currentIndex = 0;
@@ -451,7 +482,8 @@ public sealed partial class MainWindow : Window
             });
 
             if (siblings.Count <= 1) return;
-            if (!InViewer) return; // user already navigated away
+            if (!InViewer) return;          // user already navigated away
+            if (gen != _pipelineGen) return; // a different open rebuilt the pipeline while we listed
 
             var keep = Current?.Path ?? path;
             // LoadFiles RE-SORTS BY NAME — feed its items back in the explorer order computed above,
@@ -559,6 +591,7 @@ public sealed partial class MainWindow : Window
         StatusText.Text = "Loading…";
         ShowExplorer();
 
+        _pipelineGen++; // invalidate any in-flight sibling backfill from an earlier direct open
         var items = await Task.Run(() => _library.LoadFiles(paths));
         _allPhotos.Clear();
         _allPhotos.AddRange(items);
@@ -755,6 +788,10 @@ public sealed partial class MainWindow : Window
         // Apply now and again after layout (the panel may not be realized yet on the first pass).
         ApplyIconSize();
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, ApplyIconSize);
+
+        // A folder change that arrived while the viewer was up (window active, explorer hidden) was
+        // deferred with nowhere to land — the activation hook only fires on focus changes. Catch up now.
+        if (_pendingWatchRefresh) { _pendingWatchRefresh = false; RefreshFolderIncremental(); }
     }
 
     // --- Viewer chrome auto-hide ---
@@ -1861,7 +1898,13 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _explorerRaw = _fs.List(_currentFolder, showWindowsHidden: _showWindowsHidden, _showAppHidden);
+        // Adopt already-shown objects for surviving paths (same trick as RefreshFolderInPlace): taking
+        // the fresh listing verbatim desyncs _explorerRaw from _explorerItems — a later in-place rename
+        // would then reconcile against stale objects and visibly revert.
+        var listed = _fs.List(_currentFolder, showWindowsHidden: _showWindowsHidden, _showAppHidden);
+        var current = new Dictionary<string, ExplorerItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var it in _explorerItems) current[it.Path] = it;
+        _explorerRaw = listed.Select(f => current.TryGetValue(f.Path, out var old) ? old : f).ToList();
         var target = SortItems(_explorerRaw);
         ReconcileExplorerItems(target);
 
@@ -2676,11 +2719,15 @@ public sealed partial class MainWindow : Window
                 // engine (Dolby Atmos / DTS:X / Windows Sonic) on the output device renders surround.
                 mp.AudioCategory = Windows.Media.Playback.MediaPlayerAudioCategory.Movie;
                 // Restore the remembered audio state: muted stays muted, otherwise the last volume.
-                // "Start videos muted" (opt-in, Settings) still forces a muted start for video.
+                // Snapshot BEFORE touching the slider — setting Value fires SliderChanged SYNCHRONOUSLY,
+                // which derives mute from the volume and would clobber the remembered state under us.
+                var remMuted = _state.VideoMuted;
                 var remVol = Math.Clamp(_state.VideoVolume, 0, 100);
                 if (Math.Abs(VideoVolumeSlider.Value - remVol) > 0.5) VideoVolumeSlider.Value = remVol; // fires SliderChanged
-                _videoMuted = _state.VideoMuted || (!isAudio && _state.StartVideoMuted);
-                _state.VideoMuted = _videoMuted;   // SliderChanged just derived mute from the volume — put the truth back
+                // "Start videos muted" (opt-in) forces the START muted for video, but must not poison the
+                // remembered preference — persisting it would leave audio files muted forever after.
+                _videoMuted = remMuted || (!isAudio && _state.StartVideoMuted);
+                _state.VideoMuted = remMuted;
                 mp.IsMuted = _videoMuted;
                 mp.Volume = VideoVolumeSlider.Value / 100.0;
                 mp.IsLoopingEnabled = _videoRepeat;
@@ -2783,6 +2830,11 @@ public sealed partial class MainWindow : Window
     private void EnterImageMode()
     {
         StopVideo();
+        // The video editor must not survive into image mode: its panel/filmstrip would overlay the
+        // photo and its Export would run FFmpeg against a stale (possibly deleted) _currentVideoPath.
+        if (VideoEditorPanel.Visibility == Visibility.Visible || EditTimeline.Visibility == Visibility.Visible)
+            CloseVideoEditor();
+        _currentVideoPath = null;
         VideoPlayer.Visibility = Visibility.Collapsed;
         VideoBackBar.Visibility = Visibility.Collapsed;
         VideoControlsBar.Visibility = Visibility.Collapsed;
@@ -2808,14 +2860,24 @@ public sealed partial class MainWindow : Window
     private void OpenImageFromExplorer(ExplorerItem item)
     {
         PopulatePhotoPipelineFromCurrent();
-        var idx = _view.ToList().FindIndex(p => string.Equals(p.Path, item.Path, StringComparison.OrdinalIgnoreCase));
-        _currentIndex = Math.Max(0, idx);
+        int IndexOfTarget() => _view.ToList().FindIndex(p => string.Equals(p.Path, item.Path, StringComparison.OrdinalIgnoreCase));
+        var idx = IndexOfTarget();
+        if (idx < 0)
+        {
+            // The clicked photo is in the Hidden album (filtered out of _view) — switch to the hidden
+            // set so it opens AS ITSELF instead of silently showing a different image (index 0).
+            var target = _allPhotos.FirstOrDefault(p => string.Equals(p.Path, item.Path, StringComparison.OrdinalIgnoreCase));
+            if (target?.IsHidden == true) { _showHiddenAlbum = true; RefreshView(); idx = IndexOfTarget(); }
+        }
+        if (idx < 0) { StatusText.Text = $"Couldn't open {item.Name}."; return; } // never open the WRONG photo
+        _currentIndex = idx;
         ShowViewer();
         _ = LoadCurrentAsync();
     }
 
     private void PopulatePhotoPipelineFromCurrent()
     {
+        _pipelineGen++; // invalidate any in-flight sibling backfill from an earlier direct open
         // Follow the DISPLAYED order — the sequence the user actually sees (and Peek walks). The list
         // control flattens grouped views group-by-group; _explorerItems only holds the flat sort and
         // diverges from the screen whenever grouping is on.
@@ -3330,6 +3392,7 @@ public sealed partial class MainWindow : Window
             // No folder reload: adopt the new name on the SAME item (loaded thumbnails, scroll and
             // selection all survive) and just move it to its new sorted position.
             var newPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(item.Path) ?? "", newName);
+            _state.RepathEntry(item.Path, newPath); // hidden/favorite/thumbnail/sort/pin flags follow the rename
             item.Rename(newPath);
             ResortExplorerInPlace(item);
         }
@@ -3482,6 +3545,7 @@ public sealed partial class MainWindow : Window
             }
             try { await si.RenameAsync(name, NameCollisionOption.FailIfExists); ok++; }
             catch (Exception ex) { StatusText.Text = $"Rename failed: {ex.Message}"; }
+            _state.RepathEntry(it.Path, si.Path); // hidden/favorite/thumbnail/sort/pin flags follow the rename
             it.Rename(si.Path);   // whatever landed on disk (final name, or the temp on failure)
         }
 
@@ -3561,6 +3625,8 @@ public sealed partial class MainWindow : Window
     /// network shares); items WinRT can't wrap are simply left out of the system clipboard.</summary>
     private async System.Threading.Tasks.Task CopyItemsToClipboardAsync(List<ExplorerItem> selection, bool cut)
     {
+        // Bin entries are GUID store files — cutting/copying them out corrupts the bin's index.
+        if (_currentFolder == RecycleBin.Location) return;
         // Drives can't be copied/moved — only real files and folders.
         selection = selection.Where(i => i.Kind != ExplorerItemKind.Drive).ToList();
         if (selection.Count == 0) return;
@@ -3587,10 +3653,36 @@ public sealed partial class MainWindow : Window
         {
             var data = new DataPackage { RequestedOperation = cut ? DataPackageOperation.Move : DataPackageOperation.Copy };
             data.SetStorageItems(items);
-            _suppressClipChange = true;
-            Clipboard.SetContent(data);
+            Clipboard.SetContent(data); // ContentChanged compares content against _fileClip — no flag needed
         }
-        catch { _suppressClipChange = false; } // clipboard busy — in-app paste still works via _fileClip
+        catch { /* clipboard busy — in-app paste still works via _fileClip */ }
+    }
+
+    /// <summary>Drives and volume roots must never be deletable as a unit — recycling "E:\" would
+    /// copy the whole drive into the bin store and then erase it; shredding it would wipe the volume.</summary>
+    private static bool IsUndeletableRoot(ExplorerItem i)
+    {
+        if (i.Kind == ExplorerItemKind.Drive) return true;
+        if (i.IsShellItem || string.IsNullOrEmpty(i.Path)) return false;
+        try
+        {
+            var full = System.IO.Path.GetFullPath(i.Path);
+            return string.Equals(System.IO.Path.GetPathRoot(full), full, StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>Removes one non-bin, non-remote item: vault plaintext is shredded in place (it must
+    /// never reach the global Recycle Bin), everything else goes to the bin.</summary>
+    private async System.Threading.Tasks.Task<bool> BinOrShredVaultAwareAsync(string path)
+    {
+        if (IsInCurrentVault(path))
+        {
+            var m = SecureWipe.Parse(_state.WipeMethod);
+            await SecureWipe.WipePathAsync(path, m == WipeMethod.None ? WipeMethod.Random : m);
+            return true;
+        }
+        return _bin.MoveToBin(path);
     }
 
     private async System.Threading.Tasks.Task DeleteExplorerAsync(ExplorerItem item)
@@ -3600,6 +3692,8 @@ public sealed partial class MainWindow : Window
 
         // Inside a friend's share: ask the owner to delete it from their vault (needs write access).
         if (InRemoteBrowse(_currentFolder)) { await ConfirmRemoteDeleteAsync(new List<string> { item.Path }, item.Name); return; }
+
+        if (IsUndeletableRoot(item)) { StatusText.Text = "Drives can't be deleted."; return; }
 
         var permanent = IsShiftDown();
         var dialog = new ContentDialog
@@ -3619,7 +3713,7 @@ public sealed partial class MainWindow : Window
         {
             if (permanent)
                 await RunWipeWithUiAsync(new[] { item.Path }, CurrentWipeMethod, "Securely deleting 1 item");
-            else if (!_bin.MoveToBin(item.Path))
+            else if (!await BinOrShredVaultAwareAsync(item.Path))
                 StatusText.Text = "Delete failed: item not found.";
             LoadCurrentFolder();
         }
@@ -3632,6 +3726,7 @@ public sealed partial class MainWindow : Window
         var active = ExplorerIconsView.Visibility == Visibility.Visible
             ? (ListViewBase)ExplorerIconsView : ExplorerDetailsList;
         var selection = active.SelectedItems.OfType<ExplorerItem>().ToList();
+        selection = selection.Where(i => !IsUndeletableRoot(i)).ToList();
         if (selection.Count == 0) return;
 
         // In the bin view, "delete" means permanently shred the selected entries.
@@ -3669,7 +3764,7 @@ public sealed partial class MainWindow : Window
         {
             foreach (var item in selection)
             {
-                try { _bin.MoveToBin(item.Path); }
+                try { await BinOrShredVaultAwareAsync(item.Path); }
                 catch (Exception ex) { StatusText.Text = $"Delete failed: {ex.Message}"; }
             }
             StatusText.Text = $"Moved {selection.Count} item(s) to the Recycle Bin.";
@@ -3718,7 +3813,7 @@ public sealed partial class MainWindow : Window
     /// <summary>Right-click "Secure delete (shred)" — overwrites the files immediately, bypassing the bin.</summary>
     private async System.Threading.Tasks.Task SecureShredAsync(List<ExplorerItem> selection)
     {
-        selection = selection.Where(s => !s.IsShellItem).ToList();
+        selection = selection.Where(s => !s.IsShellItem && !IsUndeletableRoot(s)).ToList();
         if (selection.Count == 0) return;
         var effective = CurrentWipeMethod == WipeMethod.None ? WipeMethod.Random : CurrentWipeMethod; // shred always overwrites
         var what = selection.Count == 1 ? $"\"{selection[0].Name}\"" : $"{selection.Count} item(s)";
@@ -4019,6 +4114,7 @@ public sealed partial class MainWindow : Window
         {
             var file = await StorageFile.GetFileFromPathAsync(item.Path);
             await file.RenameAsync(newName, NameCollisionOption.FailIfExists);
+            _state.RepathEntry(item.Path, file.Path); // hidden/favorite flags follow the rename
             StatusText.Text = $"Renamed to {newName}";
             var dir = System.IO.Path.GetDirectoryName(item.Path);
             if (dir is not null) await LoadFolderAsync(dir); // reload so paths refresh
@@ -5881,7 +5977,10 @@ public sealed partial class MainWindow : Window
 
             // Explorer clipboard / select-all (Ctrl+C/X/V/A) are handled by ExplorerClipboard_KeyDown,
             // which is registered with handledEventsToo so the list control can't swallow them first.
-            case VirtualKey.F2 when ExplorerView.Visibility == Visibility.Visible && !IsTextInputFocused():
+            // Never in the bin view: renaming a GUID store file orphans its index entry (Restore can't
+            // find it and the orphan sweep eventually deletes it) — the context menu already refuses.
+            case VirtualKey.F2 when ExplorerView.Visibility == Visibility.Visible && !IsTextInputFocused()
+                    && _currentFolder != RecycleBin.Location:
             {
                 var sel = SelectedExplorerItems();
                 var primary = FocusedExplorerItem() ?? sel.FirstOrDefault();
@@ -6686,6 +6785,9 @@ public sealed partial class MainWindow : Window
     private async void AppWindow_Closing(Microsoft.UI.Windowing.AppWindow sender,
         Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
     {
+        // A volume change within the debounce window must not be lost to the close.
+        if (_volSaveDebounce.IsEnabled) { _volSaveDebounce.Stop(); _state.Save(); }
+
         // Remember where the user keeps photo windows so the next one opens on the same spot/monitor.
         // Only a normal (restored) window — a maximized/fullscreen rect would be wrong to re-apply.
         if (_secondaryWindow && !_isFullScreen
@@ -6701,7 +6803,9 @@ public sealed partial class MainWindow : Window
 
         // Unsaved edits (including AI, which rewrites pixels) must never be lost to the X. Cancel the close
         // synchronously — it's too late once we've awaited — then ask, and only re-close if they let us.
-        if (!_closingForVaultLock && InEditor && HasUnsavedEdits)
+        // Tray → Exit must never be re-routed into a dialog on a hidden window (invisible modal = exit
+        // blocked forever) — a deliberate exit wins over the ask.
+        if (!_closingForVaultLock && !_exitingFromTray && InEditor && HasUnsavedEdits)
         {
             args.Cancel = true;
             if (await ConfirmLeaveEditorAsync())
@@ -6713,7 +6817,8 @@ public sealed partial class MainWindow : Window
         }
 
         // "Close button returns to files": while viewing a single photo/video, X acts like Back, not quit.
-        if (!_closingForVaultLock && _state.CloseToViewerBack && InViewer)
+        // (Never on a tray Exit — that would swallow the exit on a hidden window.)
+        if (!_closingForVaultLock && !_exitingFromTray && _state.CloseToViewerBack && InViewer)
         {
             args.Cancel = true;
             ShowExplorer();
@@ -6736,12 +6841,14 @@ public sealed partial class MainWindow : Window
         StopFolderWatch();
         try { CleanupRemoteBrowse(); } catch { }   // securely wipe THIS window's shared-browse copies
         RemoveTray();
+        try { _auditWindow?.Close(); } catch { }   // don't leave a headless audit window keeping the process alive
         _backupTimer.Stop(); _driveWatcher.Stop();
 
         // Everything above is this window's own state. What follows is process-wide, and a guest window
-        // ("open in new window") closing is not the app exiting — the primary is still running. Wiping the
-        // shared temp root or locking the vault here would pull them out from under it.
-        if (_secondaryWindow) return;
+        // ("open in new window", in-process OR spawned via --new-window) closing is not the app exiting —
+        // the primary is still running. Wiping the shared temp root or locking the vault here would pull
+        // them out from under it.
+        if (_secondaryWindow || LaunchedNewWindow()) return;
         try { WipeShareTempDirs(); } catch { }
         if (!_vaults.IsAnyUnlocked) return;
         args.Cancel = true;                      // defer close until the vault is secured

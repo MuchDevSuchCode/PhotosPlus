@@ -53,6 +53,9 @@ public sealed class VaultManager
 
     public async Task<VaultUnlockOutcome> UnlockWithPassphraseAsync(Vault v, string passphrase, bool wipeEnabled, int wipeAfter)
     {
+        // Already the active unlocked vault: never re-open it — OpenWithDekAsync starts by wiping
+        // the live working folder, which would destroy not-yet-committed changes.
+        if (Current is not null && Current.Id == v.Id && Current.IsUnlocked) return VaultUnlockOutcome.Success;
         if (Current is not null && Current.Id != v.Id) await LockCurrentAsync();
         try
         {
@@ -61,6 +64,8 @@ public sealed class VaultManager
             Current = v;
             return VaultUnlockOutcome.Success;
         }
+        // Only a keyslot-unwrap/index-decrypt failure means a wrong passphrase; a corrupt content
+        // blob surfaces from Vault as InvalidDataException and must not count as a failed attempt.
         catch (System.Security.Cryptography.CryptographicException)
         {
             var attempts = v.RecordFailedAttempt();
@@ -90,6 +95,8 @@ public sealed class VaultManager
 
     public async Task<bool> UnlockWithHelloAsync(Vault v)
     {
+        // Already the active unlocked vault: never re-open it (see UnlockWithPassphraseAsync).
+        if (Current is not null && Current.Id == v.Id && Current.IsUnlocked) return true;
         if (Current is not null && Current.Id != v.Id) await LockCurrentAsync();
         var ok = await v.UnlockWithHelloAsync();
         if (ok) Current = v;
@@ -102,8 +109,11 @@ public sealed class VaultManager
     public async Task LockCurrentAsync()
     {
         var c = Current;
+        if (c is null) return;
+        // LockAsync can throw with the vault still unlocked (commit failed) — keep Current set in
+        // that case so the vault isn't orphaned in an unlocked state the app no longer tracks.
+        await c.LockAsync();
         Current = null;
-        if (c is not null) await c.LockAsync();
     }
 
     /// <summary>Commits the unlocked vault's working folder to its encrypted store without locking, so

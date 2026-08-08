@@ -36,19 +36,48 @@ public static class SecureWipe
     {
         if (Directory.Exists(path))
         {
+            if (IsReparsePoint(path)) { try { Directory.Delete(path, recursive: false); } catch { } return; }
             foreach (var f in SafeFiles(path)) WipeFile(f, method, progress);
             try { Directory.Delete(path, recursive: true); } catch { }
         }
         else
         {
+            if (IsReparsePoint(path)) { try { File.Delete(path); } catch { } return; }
             WipeFile(path, method, progress);
         }
     });
 
+    // Walks the tree manually so directory junctions/symlinks are never followed — a wipe must not
+    // overwrite a link's TARGET. Reparse points are deleted as bare links, not recursed into.
     private static IEnumerable<string> SafeFiles(string dir)
     {
-        try { return Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).ToList(); }
-        catch { return Enumerable.Empty<string>(); }
+        var files = new List<string>();
+        Collect(dir, files);
+        return files;
+    }
+
+    private static void Collect(string dir, List<string> files)
+    {
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(dir))
+            {
+                if (IsReparsePoint(f)) { try { File.Delete(f); } catch { } }
+                else files.Add(f);
+            }
+            foreach (var d in Directory.EnumerateDirectories(dir))
+            {
+                if (IsReparsePoint(d)) { try { Directory.Delete(d, recursive: false); } catch { } }
+                else Collect(d, files);
+            }
+        }
+        catch { /* access denied etc. — wipe what we can */ }
+    }
+
+    private static bool IsReparsePoint(string path)
+    {
+        try { return File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint); }
+        catch { return true; } // can't inspect → treat as a link so we never overwrite a target
     }
 
     /// <summary>Number of overwrite passes for a method (0 for None / plain delete).</summary>
@@ -66,8 +95,16 @@ public static class SecureWipe
         var dirs = new List<string>();
         foreach (var p in paths)
         {
-            if (Directory.Exists(p)) { files.AddRange(SafeFiles(p)); dirs.Add(p); }
-            else if (File.Exists(p)) files.Add(p);
+            if (Directory.Exists(p))
+            {
+                if (IsReparsePoint(p)) { try { Directory.Delete(p, recursive: false); } catch { } continue; }
+                files.AddRange(SafeFiles(p)); dirs.Add(p);
+            }
+            else if (File.Exists(p))
+            {
+                if (IsReparsePoint(p)) { try { File.Delete(p); } catch { } continue; }
+                files.Add(p);
+            }
         }
 
         var passes = PassCount(method);
@@ -106,8 +143,7 @@ public static class SecureWipe
         foreach (var f in files)
         {
             if (ct.IsCancellationRequested) break;
-            WipeFileCore(f, method, ref bytesDone, ct, name => Report(name, false));
-            filesDone++;
+            if (WipeFileCore(f, method, ref bytesDone, ct, name => Report(name, false))) filesDone++;
             Report(Path.GetFileName(f), true);
         }
         if (!ct.IsCancellationRequested)
@@ -115,47 +151,59 @@ public static class SecureWipe
     });
 
     // Overwrite a single file pass-by-pass, reporting bytes and honoring cancellation, then delete it.
-    private static void WipeFileCore(string path, WipeMethod method, ref long bytesDone, CancellationToken ct, Action<string>? tick)
+    // On cancellation after even one byte was overwritten the file is already destroyed, so it is still
+    // renamed + deleted (leaving it with its original name/size but garbage contents would look intact);
+    // only files not yet touched survive a cancel. Returns true when the file was removed.
+    private static bool WipeFileCore(string path, WipeMethod method, ref long bytesDone, CancellationToken ct, Action<string>? tick)
     {
         try
         {
-            if (!File.Exists(path)) return;
+            if (!File.Exists(path)) return true;
             var fi = new FileInfo(path);
             if (fi.Attributes.HasFlag(FileAttributes.ReadOnly)) fi.Attributes = FileAttributes.Normal;
             long len = fi.Length;
 
             if (method != WipeMethod.None && len > 0)
             {
+                if (ct.IsCancellationRequested) return false; // untouched — safe to leave as-is
                 var passes = Passes(method);
-                using var fs = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None);
-                var buf = new byte[(int)Math.Min(len, Chunk)];
-                for (var p = 0; p < passes.Count; p++)
+                var touched = false;
+                using (var fs = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None))
                 {
-                    if (ct.IsCancellationRequested) return;
-                    fs.Position = 0;
-                    long written = 0;
-                    while (written < len)
+                    var buf = new byte[(int)Math.Min(len, Chunk)];
+                    for (var p = 0; p < passes.Count && !ct.IsCancellationRequested; p++)
                     {
-                        if (ct.IsCancellationRequested) return;
-                        var n = (int)Math.Min(buf.Length, len - written);
-                        Fill(buf, n, passes[p], written);
-                        fs.Write(buf, 0, n);
-                        written += n; bytesDone += n;
-                        tick?.Invoke(fi.Name);
+                        fs.Position = 0;
+                        long written = 0;
+                        while (written < len && !ct.IsCancellationRequested)
+                        {
+                            var n = (int)Math.Min(buf.Length, len - written);
+                            Fill(buf, n, passes[p], written);
+                            fs.Write(buf, 0, n);
+                            written += n; bytesDone += n;
+                            touched = true;
+                            tick?.Invoke(fi.Name);
+                        }
+                        fs.Flush(flushToDisk: true);
                     }
-                    fs.Flush(flushToDisk: true);
+                    if (!ct.IsCancellationRequested)
+                    {
+                        fs.SetLength(0);
+                        fs.Flush(flushToDisk: true);
+                    }
                 }
-                fs.SetLength(0);
-                fs.Flush(flushToDisk: true);
+                if (ct.IsCancellationRequested && !touched) return false; // nothing overwritten — leave intact
             }
 
             var scrambled = Path.Combine(Path.GetDirectoryName(path)!, Guid.NewGuid().ToString("N"));
             try { File.Move(path, scrambled); File.Delete(scrambled); }
             catch { File.Delete(path); }
+            return true;
         }
         catch
         {
             try { File.Delete(path); } catch { }
+            return !File.Exists(path);
         }
     }
 

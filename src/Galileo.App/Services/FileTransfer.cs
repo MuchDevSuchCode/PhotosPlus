@@ -90,6 +90,7 @@ public sealed class FileTransfer
         var dirsToCreate = new List<string>(); // destination dirs (preserves empty subdirs / merges)
         var fastMoves = new List<(string src, string dest, bool isDir)>(); // instant same-volume renames
         var moveDirSources = new List<string>(); // top-level dirs that were merged on a move (empty-dir cleanup)
+        var claimedDests = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // dests taken by fast moves + resolved copies
 
         // ---- Plan ----
         foreach (var src in paths)
@@ -108,6 +109,11 @@ public sealed class FileTransfer
 
                     if (!Directory.Exists(destBase) && move && SameVolume(src, destBase))
                     {
+                        // Dest occupied by a file, or already claimed earlier in this batch → auto-rename
+                        // (Keep both) like the copy path does, then rename in place.
+                        if (Occupied(destBase) || claimedDests.Contains(destBase))
+                            destBase = UniquePath(destBase, claimedDests);
+                        claimedDests.Add(destBase);
                         fastMoves.Add((src, destBase, true)); // brand-new dir on the same volume → rename
                     }
                     else
@@ -124,7 +130,14 @@ public sealed class FileTransfer
                     var destPath = Path.Combine(destDir, name);
 
                     if (!File.Exists(destPath) && move && SameVolume(src, destPath))
+                    {
+                        // Dest occupied by a folder, or already claimed earlier in this batch → auto-rename
+                        // (Keep both) like the copy path does, then rename in place.
+                        if (Occupied(destPath) || claimedDests.Contains(destPath))
+                            destPath = UniquePath(destPath, claimedDests);
+                        claimedDests.Add(destPath);
                         fastMoves.Add((src, destPath, false));
+                    }
                     else
                         copies.Add(NewOp(src, destPath));
                 }
@@ -135,21 +148,21 @@ public sealed class FileTransfer
         // ---- Resolve conflicts (files whose destination already exists) ----
         var skipped = 0;
         ConflictChoice? batch = null;
-        var totalConflicts = copies.Count(o => File.Exists(o.Dest));
+        var totalConflicts = copies.Count(o => Occupied(o.Dest));
         var conflictsSeen = 0;
         var resolved = new List<CopyOp>(copies.Count);
-        var plannedDests = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // guard against in-batch collisions
         foreach (var op in copies)
         {
             if (IsCanceled) return new TransferResult { Canceled = true, Skipped = skipped };
 
-            // Two ops resolving to the same destination would silently overwrite each other — treat a
-            // path already claimed earlier in this batch as a conflict and auto-rename (Keep both).
-            if (!File.Exists(op.Dest))
+            // Two ops resolving to the same destination (including a fast-move's) would silently
+            // overwrite each other — treat a path already claimed earlier in this batch as a
+            // conflict and auto-rename (Keep both).
+            if (!Occupied(op.Dest))
             {
-                if (plannedDests.Add(op.Dest)) { resolved.Add(op); continue; }
-                op.Dest = UniquePath(op.Dest, plannedDests);
-                plannedDests.Add(op.Dest);
+                if (claimedDests.Add(op.Dest)) { resolved.Add(op); continue; }
+                op.Dest = UniquePath(op.Dest, claimedDests);
+                claimedDests.Add(op.Dest);
                 resolved.Add(op);
                 continue;
             }
@@ -170,8 +183,8 @@ public sealed class FileTransfer
 
             switch (action)
             {
-                case ConflictAction.Overwrite: plannedDests.Add(op.Dest); resolved.Add(op); break; // Create truncates
-                case ConflictAction.KeepBoth: op.Dest = UniquePath(op.Dest, plannedDests); plannedDests.Add(op.Dest); resolved.Add(op); break;
+                case ConflictAction.Overwrite: claimedDests.Add(op.Dest); resolved.Add(op); break; // Create truncates
+                case ConflictAction.KeepBoth: op.Dest = UniquePath(op.Dest, claimedDests); claimedDests.Add(op.Dest); resolved.Add(op); break;
                 case ConflictAction.Skip: skipped++; break;                                        // drop it
                 case ConflictAction.Cancel: return new TransferResult { Canceled = true, Skipped = skipped };
             }
@@ -211,13 +224,32 @@ public sealed class FileTransfer
 
         Report("", force: true);
 
-        // ---- Instant same-volume renames first ----
+        // ---- Instant same-volume renames first (before the copy list is finalized, so a failed
+        // rename can be demoted to a streamed copy below) ----
         foreach (var (src, dest, isDir) in fastMoves)
         {
             _gate.Wait();
             if (IsCanceled) { canceled = true; break; }
             try { if (isDir) Directory.Move(src, dest); else File.Move(src, dest); filesDone++; Report(Path.GetFileName(dest), true); }
-            catch { errors++; }
+            catch
+            {
+                // Rename failed (locked file, sharing violation, dest appeared meanwhile…) —
+                // fall back to the streamed-copy path instead of dropping the item.
+                if (isDir)
+                {
+                    var before = copies.Count;
+                    PlanDirectory(src, dest, copies, dirsToCreate);
+                    if (move) moveDirSources.Add(src);
+                    for (var k = before; k < copies.Count; k++) bytesTotal += copies[k].Size;
+                    filesTotal += copies.Count - before - 1; // the dir itself was counted as one "file"
+                }
+                else
+                {
+                    var op = NewOp(src, dest);
+                    copies.Add(op);
+                    bytesTotal += op.Size;
+                }
+            }
         }
 
         // ---- Streamed copies ----
@@ -373,9 +405,12 @@ public sealed class FileTransfer
         catch { return false; }
     }
 
+    /// <summary>A destination path counts as taken whether a FILE or a FOLDER occupies it.</summary>
+    private static bool Occupied(string path) => File.Exists(path) || Directory.Exists(path);
+
     private static string UniquePath(string path, HashSet<string>? avoid = null)
     {
-        bool Taken(string p) => File.Exists(p) || (avoid is not null && avoid.Contains(p));
+        bool Taken(string p) => Occupied(p) || (avoid is not null && avoid.Contains(p));
         if (!Taken(path)) return path;
         var dir = Path.GetDirectoryName(path)!;
         var stem = Path.GetFileNameWithoutExtension(path);

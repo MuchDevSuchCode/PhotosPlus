@@ -642,10 +642,25 @@ public sealed partial class MainWindow
             var dir = rb.Dir;
             var sep = Path.DirectorySeparatorChar;
 
+            // Item names come off the wire from the OWNER's machine — never trust them as paths. A
+            // hostile/compromised peer sending "..\..\Startup\evil.exe" or a rooted/drive path would
+            // otherwise write outside our temp browse folder (arbitrary file write). Resolve each name
+            // and accept it only if it lands strictly inside the browse dir.
+            string? SafeDest(string wireName)
+            {
+                if (string.IsNullOrEmpty(wireName) || wireName.Contains(':')) return null;
+                try
+                {
+                    var full = Path.GetFullPath(Path.Combine(dir, wireName.Replace('/', sep)));
+                    return full.StartsWith(dir.TrimEnd(sep) + sep, StringComparison.OrdinalIgnoreCase) ? full : null;
+                }
+                catch { return null; }
+            }
+
             // Desired state: dest path -> object id.
             var desired = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var it in listing.Items)
-                desired[Path.Combine(dir, it.Name.Replace('/', sep))] = it.Id;
+                if (SafeDest(it.Name) is { } safe) desired[safe] = it.Id;
 
             // Remove files the owner deleted, and any leftover partials.
             var removed = 0;
@@ -667,7 +682,7 @@ public sealed partial class MainWindow
             foreach (var it in items)
             {
                 if (rb.Cts.IsCancellationRequested) return;
-                var dest = Path.Combine(dir, it.Name.Replace('/', sep));
+                if (SafeDest(it.Name) is not { } dest) continue; // hostile/malformed name — never write it
                 // Download only what we don't already have at the right size (handles adds + changes).
                 if (!File.Exists(dest) || new FileInfo(dest).Length != it.Size)
                 {

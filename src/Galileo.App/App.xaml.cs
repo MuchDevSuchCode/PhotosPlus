@@ -14,6 +14,11 @@ public partial class App : Application
     /// <summary>Process-wide persistent state (hidden/favorite flags, settings).</summary>
     public static AppState State { get; } = AppState.Load();
 
+    /// <summary>Process-wide vault manager. One instance for ALL windows: a per-window manager let a
+    /// guest photo window unlock a vault the primary already had open, which re-decrypted (wiping) the
+    /// live working folder, and let the process exit thinking no vault was unlocked.</summary>
+    public static VaultManager Vaults { get; } = new();
+
     /// <summary>Crash/error log path: %LocalAppData%\Galileo\logs\error.log.</summary>
     public static string LogPath { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

@@ -13,7 +13,6 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Galileo.Services;
 using Windows.Foundation;
-using Windows.Graphics.Imaging;
 using Windows.Media.Playback;
 using Windows.Storage.Pickers;
 
@@ -131,7 +130,14 @@ public sealed partial class MainWindow
     }
 
     private void EditSetStart_Click(object sender, RoutedEventArgs e) { _editTrimStart = CurrentVideoSeconds(); UpdateTrimText(); }
-    private void EditSetEnd_Click(object sender, RoutedEventArgs e) { _editTrimEnd = CurrentVideoSeconds(); UpdateTrimText(); }
+    private void EditSetEnd_Click(object sender, RoutedEventArgs e)
+    {
+        // An end at/before the start would "successfully" export a near-zero-length clip.
+        var pos = CurrentVideoSeconds();
+        if (pos <= _editTrimStart) { EditorStatus.Text = "The end must be after the start."; return; }
+        _editTrimEnd = pos;
+        UpdateTrimText();
+    }
     private void EditResetTrim_Click(object sender, RoutedEventArgs e) { _editTrimStart = 0; _editTrimEnd = null; UpdateTrimText(); }
 
     private void EditAddSegment_Click(object sender, RoutedEventArgs e)
@@ -316,11 +322,19 @@ public sealed partial class MainWindow
         EditFilmstrip.ColumnDefinitions.Clear();
         EditPlayheadShift.X = 0;
         if (_currentVideoPath is null || _editVideoInfo is null || _editVideoInfo.Duration <= 0) return;
+        var gen = _editorOpenGen; // detect close/reopen during generation
         try
         {
             var thumbs = await FfmpegVideo.GenerateThumbnailsAsync(_currentVideoPath, 16, _editVideoInfo.Duration);
-            _thumbsDir = thumbs.Count > 0 ? Path.GetDirectoryName(thumbs[0]) : null;
-            if (!_editorReady) return; // editor closed while generating
+            var dir = thumbs.Count > 0 ? Path.GetDirectoryName(thumbs[0]) : null;
+            if (gen != _editorOpenGen || !_editorReady)
+            {
+                // Editor closed (or reopened) while generating — its cleanup already ran, so assigning
+                // _thumbsDir now would just orphan these JPEGs; delete them instead.
+                try { if (dir is not null && Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+                return;
+            }
+            _thumbsDir = dir;
             for (var i = 0; i < thumbs.Count; i++)
             {
                 EditFilmstrip.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -401,7 +415,6 @@ public sealed partial class MainWindow
 
     // ---- Live preview (Win2D frame server) ----
 
-    private SoftwareBitmap? _frameDest;
     private CanvasImageSource? _previewSource;
     private CanvasRenderTarget? _lastFrame;
     private int _previewSrcW, _previewSrcH;
@@ -419,7 +432,10 @@ public sealed partial class MainWindow
         if (mp is null || w <= 0 || h <= 0) return; // no probe info → keep the normal player
         try
         {
-            _frameDest = new SoftwareBitmap(BitmapPixelFormat.Bgra8, w, h, BitmapAlphaMode.Premultiplied);
+            // The frame server copies straight into this persistent render target (a CanvasRenderTarget is
+            // an IDirect3DSurface) — no per-frame SoftwareBitmap or throwaway GPU texture.
+            _lastFrame?.Dispose();
+            _lastFrame = new CanvasRenderTarget(CanvasDevice.GetSharedDevice(), w, h, 96);
             _previewPlayer = mp;
             mp.IsVideoFrameServerEnabled = true;
             mp.VideoFrameAvailable += OnVideoFrameAvailable;
@@ -448,8 +464,6 @@ public sealed partial class MainWindow
         _previewSource = null; _previewSrcW = _previewSrcH = 0;
         try { _lastFrame?.Dispose(); } catch { }
         _lastFrame = null;
-        try { _frameDest?.Dispose(); } catch { }
-        _frameDest = null;
         if (EditPreviewTransform is not null) { EditPreviewTransform.Rotation = 0; EditPreviewTransform.ScaleX = EditPreviewTransform.ScaleY = 1; }
     }
 
@@ -468,21 +482,9 @@ public sealed partial class MainWindow
 
     private void GrabAndRenderFrame(MediaPlayer mp)
     {
-        if (!_previewOn || _frameDest is null) return;
-        var device = CanvasDevice.GetSharedDevice();
-        using var input = CanvasBitmap.CreateFromSoftwareBitmap(device, _frameDest);
-        mp.CopyFrameToVideoSurface(input);
-
-        var w = (float)input.Size.Width;
-        var h = (float)input.Size.Height;
-        if (_lastFrame is null || _lastFrame.SizeInPixels.Width != input.SizeInPixels.Width || _lastFrame.SizeInPixels.Height != input.SizeInPixels.Height)
-        {
-            _lastFrame?.Dispose();
-            _lastFrame = new CanvasRenderTarget(device, w, h, 96);
-        }
-        using (var ds = _lastFrame.CreateDrawingSession()) { ds.Clear(Microsoft.UI.Colors.Black); ds.DrawImage(input); }
-
-        RenderPreview(input, input.Size.Width, input.Size.Height);
+        if (!_previewOn || _lastFrame is null) return;
+        mp.CopyFrameToVideoSurface(_lastFrame);
+        RenderPreview(_lastFrame, _lastFrame.Size.Width, _lastFrame.Size.Height);
     }
 
     private void RenderFromLastFrame()

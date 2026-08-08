@@ -28,33 +28,37 @@
         <Border x:Name="Controls" VerticalAlignment="Bottom" HorizontalAlignment="Center"
                 Background="#AA000000" CornerRadius="28" Padding="10,6" Margin="0,0,0,24">
             <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                <Button x:Name="PrevBtn" Click="Prev_Click" Width="44" Height="44" CornerRadius="22" Background="Transparent">
+                <Button x:Name="PrevBtn" Click="Prev_Click" Width="44" Height="44" CornerRadius="22" Background="Transparent"
+                        ToolTipService.ToolTip="Previous (←)" AutomationProperties.Name="Previous (←)">
                     <FontIcon Glyph="&#xE892;" FontFamily="Segoe Fluent Icons" Foreground="White" />
                 </Button>
-                <Button x:Name="PlayBtn" Click="PlayPause_Click" Width="44" Height="44" CornerRadius="22" Background="Transparent">
+                <!-- Tooltip/name updated in TogglePlay to match the current action -->
+                <Button x:Name="PlayBtn" Click="PlayPause_Click" Width="44" Height="44" CornerRadius="22" Background="Transparent"
+                        ToolTipService.ToolTip="Pause (Space)" AutomationProperties.Name="Pause (Space)">
                     <FontIcon x:Name="PlayIcon" Glyph="&#xE769;" FontFamily="Segoe Fluent Icons" Foreground="White" />
                 </Button>
-                <Button x:Name="NextBtn" Click="Next_Click" Width="44" Height="44" CornerRadius="22" Background="Transparent">
+                <Button x:Name="NextBtn" Click="Next_Click" Width="44" Height="44" CornerRadius="22" Background="Transparent"
+                        ToolTipService.ToolTip="Next (→)" AutomationProperties.Name="Next (→)">
                     <FontIcon Glyph="&#xE893;" FontFamily="Segoe Fluent Icons" Foreground="White" />
                 </Button>
                 <AppBarSeparator Foreground="#55FFFFFF" />
                 <Button x:Name="LessTimeBtn" Click="Faster_Click" Width="44" Height="44" CornerRadius="22" Background="Transparent"
-                        ToolTipService.ToolTip="Less time per photo">
+                        ToolTipService.ToolTip="Less time per photo" AutomationProperties.Name="Less time per photo">
                     <FontIcon Glyph="&#xE738;" FontFamily="Segoe Fluent Icons" Foreground="White" />
                 </Button>
                 <TextBlock x:Name="SpeedText" Foreground="White" VerticalAlignment="Center" MinWidth="36"
                            TextAlignment="Center" />
                 <Button x:Name="MoreTimeBtn" Click="Slower_Click" Width="44" Height="44" CornerRadius="22" Background="Transparent"
-                        ToolTipService.ToolTip="More time per photo">
+                        ToolTipService.ToolTip="More time per photo" AutomationProperties.Name="More time per photo">
                     <FontIcon Glyph="&#xE710;" FontFamily="Segoe Fluent Icons" Foreground="White" />
                 </Button>
                 <ToggleButton x:Name="ShuffleBtn" Click="Shuffle_Click" Width="44" Height="44" CornerRadius="22" Background="Transparent"
-                              ToolTipService.ToolTip="Shuffle">
+                              ToolTipService.ToolTip="Shuffle" AutomationProperties.Name="Shuffle">
                     <FontIcon Glyph="&#xE8B1;" FontFamily="Segoe Fluent Icons" Foreground="White" />
                 </ToggleButton>
                 <AppBarSeparator Foreground="#55FFFFFF" />
                 <Button x:Name="ExitBtn" Click="Exit_Click" Width="44" Height="44" CornerRadius="22" Background="Transparent"
-                        ToolTipService.ToolTip="Exit (Esc)">
+                        ToolTipService.ToolTip="Exit (Esc)" AutomationProperties.Name="Exit (Esc)">
                     <FontIcon Glyph="&#xE711;" FontFamily="Segoe Fluent Icons" Foreground="White" />
                 </Button>
             </StackPanel>
