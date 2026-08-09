@@ -372,6 +372,14 @@ public sealed partial class MainWindow : Window
             EnsureFileManager();
             NewTab(null); // This PC / home
         }
+
+        // Cold-start baseline in the diagnostics log — lets perf work show its receipts.
+        try
+        {
+            var up = DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime;
+            App.LogInfo($"startup: window constructed {up.TotalMilliseconds:0} ms after process start ({(_secondaryWindow ? "photo" : "main")})");
+        }
+        catch { }
     }
 
     /// <summary>
@@ -399,6 +407,7 @@ public sealed partial class MainWindow : Window
             _vaults.WipeOrphanWorkDirs();
             ArchiveService.WipeOrphans(); // clear any leftover extracted-zip temp dirs from a prior run
             RecoverRenameJournal();       // restore names stranded by a crash mid bulk-rename
+            _ = Task.Run(() => ThumbDiskCache.Sweep()); // keep the thumbnail cache under its size cap
         }
         // Guest photo windows get no vault affordances at all: vault lifecycle (unlock/lock/share)
         // belongs to the primary window, and offering it here invites concurrent unlocks of the same
@@ -791,6 +800,70 @@ public sealed partial class MainWindow : Window
 
     private void ViewerView_PointerMoved(object sender, PointerRoutedEventArgs e) => ShowChrome();
 
+    /// <summary>Decoded image ready for the viewer. Cap the decoded size on the longer side:
+    /// full-resolution decode can exceed the GPU's max texture size on large images
+    /// (panoramas/huge screenshots) and crash the render thread — a failure try/catch can't see.
+    /// 8000px is well under the ~16384 D3D limit and still sharp for screen + zoom.</summary>
+    private static async Task<BitmapImage> DecodeViewerImageAsync(string path)
+    {
+        const int maxSide = 8000;
+        var file = await StorageFile.GetFileFromPathAsync(path);
+        var props = await file.Properties.GetImagePropertiesAsync();
+        uint w = props.Width, h = props.Height;
+        using var stream = await file.OpenReadAsync();
+        var bmp = new BitmapImage { DecodePixelType = DecodePixelType.Logical };
+        if (w > 0 && h > 0 && Math.Max(w, h) > maxSide)
+        {
+            if (w >= h) bmp.DecodePixelWidth = maxSide;
+            else bmp.DecodePixelHeight = maxSide;
+        }
+        await bmp.SetSourceAsync(stream);
+        return bmp;
+    }
+
+    // Neighbor preload: arrows feel instant because the next/previous photo is usually decoded by
+    // the time it's asked for. Two entries max (±1) so a giant image can pin at most two decodes.
+    // Entries carry the file's mtime and are revalidated at use, so an edit/overwrite on disk can
+    // never serve a stale preloaded frame.
+    private readonly Dictionary<string, (BitmapImage Bmp, DateTime MtimeUtc)> _preloaded = new(StringComparer.OrdinalIgnoreCase);
+    private int _preloadGen;
+
+    private bool TryTakePreloaded(string path, out BitmapImage bmp)
+    {
+        bmp = null!;
+        if (!_preloaded.TryGetValue(path, out var e)) return false;
+        try { if (File.GetLastWriteTimeUtc(path) != e.MtimeUtc) { _preloaded.Remove(path); return false; } }
+        catch { _preloaded.Remove(path); return false; }
+        bmp = e.Bmp;
+        return true;
+    }
+
+    private async void PreloadNeighborsAsync()
+    {
+        var gen = ++_preloadGen;
+        var wanted = new List<string>();
+        foreach (var d in new[] { 1, -1 })
+        {
+            var i = _currentIndex + d;
+            if (i >= 0 && i < _view.Count && PhotoLibrary.IsSupported(_view[i].Path)) wanted.Add(_view[i].Path);
+        }
+        // Drop entries that are no longer neighbors (keeps the cache at ≤2 decoded images).
+        foreach (var k in _preloaded.Keys.Where(k => !wanted.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList())
+            _preloaded.Remove(k);
+        foreach (var p in wanted)
+        {
+            if (_preloaded.ContainsKey(p)) continue;
+            try
+            {
+                var mtime = File.GetLastWriteTimeUtc(p);
+                var bmp = await DecodeViewerImageAsync(p);
+                if (gen != _preloadGen) return;      // navigation moved on — neighbors changed
+                _preloaded[p] = (bmp, mtime);
+            }
+            catch { /* preload is best-effort; the real load reports errors */ }
+        }
+    }
+
     private async Task LoadCurrentAsync()
     {
         var item = Current;
@@ -810,28 +883,11 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            var file = await StorageFile.GetFileFromPathAsync(item.Path);
-            if (token != _loadToken) return;
-
-            // Cap the decoded size on the longer side. Decoding at full resolution can exceed the
-            // GPU's max texture size on large images (panoramas/huge screenshots) and crash the
-            // render thread — a failure the try/catch here can't see. 8000px is well under the
-            // ~16384 D3D limit and still sharp for screen + zoom.
-            const int maxSide = 8000;
-            var props = await file.Properties.GetImagePropertiesAsync();
-            if (token != _loadToken) return;
-            uint w = props.Width, h = props.Height;
-
-            using var stream = await file.OpenReadAsync();
-            if (token != _loadToken) return;
-            var bmp = new BitmapImage { DecodePixelType = DecodePixelType.Logical };
-            if (w > 0 && h > 0 && Math.Max(w, h) > maxSide)
+            if (!TryTakePreloaded(item.Path, out var bmp))
             {
-                if (w >= h) bmp.DecodePixelWidth = maxSide;
-                else bmp.DecodePixelHeight = maxSide;
+                bmp = await DecodeViewerImageAsync(item.Path);
+                if (token != _loadToken) return; // a newer photo won the race — drop this one
             }
-            await bmp.SetSourceAsync(stream);
-            if (token != _loadToken) return; // a newer photo won the race — drop this one
             ViewerImage.Source = bmp;
             _bmpW = bmp.PixelWidth;
             _bmpH = bmp.PixelHeight;
@@ -848,6 +904,7 @@ public sealed partial class MainWindow : Window
         UpdateFavoriteIcon();
         UpdateEyeState();
         ModeLabel.Text = $"{item.FileName}   ({_currentIndex + 1}/{_view.Count})";
+        PreloadNeighborsAsync(); // fire-and-forget: warm ±1 for instant arrows
         if (InfoPanel.Visibility == Visibility.Visible) await PopulateInfoAsync();
     }
 
@@ -1409,6 +1466,67 @@ public sealed partial class MainWindow : Window
 
     /// <summary>Enumerates drives off the UI thread (IsReady/size on a network drive can block for the
     /// SMB timeout), then updates the sidebar, the drive cache, and — if we're on This PC — the listing.</summary>
+    // ===================== Sidebar folder tree =====================
+
+    /// <summary>Payload for a folder-tree node; ToString feeds the TreeView's default template.</summary>
+    private sealed class FolderTreeNode
+    {
+        public string Name = "", Path = "";
+        public override string ToString() => Name;
+    }
+
+    /// <summary>(Re)builds the tree's drive roots. Skipped when the drive set is unchanged so the
+    /// user's expansion state survives the periodic drive refresh.</summary>
+    private void PopulateFolderTree(List<ExplorerItem> drives)
+    {
+        var wanted = drives.Select(d => d.Path).ToList();
+        var current = FolderTree.RootNodes.Select(n => ((FolderTreeNode)n.Content).Path).ToList();
+        if (wanted.SequenceEqual(current, StringComparer.OrdinalIgnoreCase)) return;
+        FolderTree.RootNodes.Clear();
+        foreach (var d in drives)
+            FolderTree.RootNodes.Add(new TreeViewNode
+            {
+                Content = new FolderTreeNode { Name = d.Name, Path = d.Path },
+                HasUnrealizedChildren = true,
+            });
+    }
+
+    private async void FolderTree_Expanding(TreeView sender, TreeViewExpandingEventArgs args)
+    {
+        var node = args.Node;
+        if (!node.HasUnrealizedChildren || node.Content is not FolderTreeNode f) return;
+        node.HasUnrealizedChildren = false;
+        List<ExplorerItem> subs;
+        try
+        {
+            // Same visibility rules as the main listing (Windows-hidden + app-hidden folders).
+            subs = await Task.Run(() => _fs.List(f.Path, showWindowsHidden: _showWindowsHidden, _showAppHidden)
+                .Where(i => i.Kind == ExplorerItemKind.Folder).ToList());
+        }
+        catch { return; } // access denied / device gone — leave the node empty
+        foreach (var s in subs)
+            node.Children.Add(new TreeViewNode
+            {
+                Content = new FolderTreeNode { Name = s.Name, Path = s.Path },
+                // Chevron up front for every folder: probing each for subfolders would cost an extra
+                // enumeration per node (painful on network shares). An empty expand just yields nothing.
+                HasUnrealizedChildren = true,
+            });
+    }
+
+    private void FolderTree_Collapsed(TreeView sender, TreeViewCollapsedEventArgs args)
+    {
+        // Drop the subtree so the next expand re-reads the disk (fresh contents, and memory back).
+        args.Node.Children.Clear();
+        args.Node.HasUnrealizedChildren = true;
+    }
+
+    private void FolderTree_ItemInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
+    {
+        var content = (args.InvokedItem as TreeViewNode)?.Content ?? args.InvokedItem;
+        if (content is FolderTreeNode f) NavigateTo(f.Path);
+    }
+
     private async Task RefreshDrivesAsync()
     {
         List<ExplorerItem> drives;
@@ -1427,6 +1545,7 @@ public sealed partial class MainWindow : Window
                 _driveCache = drives;
                 _knownDrives = sig;
                 DrivesList.ItemsSource = drives;
+                PopulateFolderTree(drives);
                 foreach (var i in drives) _ = i.LoadIconAsync(32);
                 if (_currentFolder is null)
                 {
@@ -2367,7 +2486,15 @@ public sealed partial class MainWindow : Window
     {
         if (args.Item is not ExplorerItem it) return;
         // Recycled out (scrolled off) — drop any queued decode so a fast scroll can't flood the pipeline.
-        if (args.InRecycleQueue) { it.CancelIconLoad(); return; }
+        if (args.InRecycleQueue)
+        {
+            it.CancelIconLoad();
+            // Huge folders: thumbnails scrolled past would otherwise stay in memory for the folder's
+            // lifetime (10k photos ≈ hundreds of MB). Re-loading on scroll-back is cheap now that
+            // icons come from the on-disk cache, so above this size recycled icons are released.
+            if (_explorerItems.Count > 2000) it.ResetIcon();
+            return;
+        }
         if (it.Icon is null)
             await it.LoadIconAsync((uint)Math.Clamp(_iconSize, 48, 256));
     }
@@ -3954,6 +4081,9 @@ public sealed partial class MainWindow : Window
         if (string.IsNullOrEmpty(folder)) { StatusText.Text = "Couldn't set the folder thumbnail."; return; }
         _state.FolderThumbnails[folder] = imagePath;
         _state.Save();
+        // The chosen thumbnail lives in app state — the folder's mtime doesn't change, so the disk
+        // cache would keep serving the old composed icon without an explicit invalidation.
+        ThumbDiskCache.Invalidate(folder);
         RefreshFolderIcon(folder);
         StatusText.Text = $"Folder thumbnail set to {System.IO.Path.GetFileName(imagePath)}";
     }

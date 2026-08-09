@@ -68,7 +68,7 @@ Still TODO from the roadmap below: editing (Phase 5), shell/default-app registra
 ## Phase 2 — Library & collections (parity)
 
 - [x] Folder/file picker + persisted last folder.
-- [~] Async thumbnail pipeline (virtualized, on-realization). _(on-disk cache: TODO)_
+- [x] Async thumbnail pipeline (virtualized, on-realization) with an on-disk cache (raw-BGRA, mtime-keyed, 256 MB LRU; vault/bin paths excluded).
 - [x] Gallery grid with virtualization for large folders. _(adjustable thumbnail size: TODO)_
 - [x] Favorites (★) stored in local state + "Favorites only" filter.
 - [ ] "Recent" and "All photos" virtual collections.
@@ -129,7 +129,7 @@ Still TODO from the roadmap below: editing (Phase 5), shell/default-app registra
 - [~] Settings panel: **slideshow seconds / shuffle / loop / transition** done. _(theme, default folder, Hello gate, eye behavior: TODO)_
 - [x] Modern UI redesign: Mica, extended title bar, floating auto-hiding controls, removed command bar.
 - [~] Keyboard shortcuts implemented. _(full accessibility pass: narrator/high-contrast/keyboard nav TODO)_
-- [ ] Performance pass: cold-open time, memory on large folders, neighbor preload.
+- [~] Performance pass: neighbor preload + huge-folder icon release + disk thumb cache done; cold-open timing logged (further tuning open).
 - [ ] Localization scaffolding.
 - [ ] App icon, store assets.
 - [ ] Package & sign MSIX; release notes.

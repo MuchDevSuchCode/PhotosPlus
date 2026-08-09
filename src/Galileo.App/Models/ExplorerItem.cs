@@ -174,6 +174,29 @@ public partial class ExplorerItem : ObservableObject
             // a content preview (the first image inside), composited ourselves so it stays upright.
             if (Kind != ExplorerItemKind.File)
             {
+                // The composed pixels differ when the preview overlay is enabled, so previews get
+                // their own key space — toggling the setting must not serve the other variant.
+                var pxKey = Kind == ExplorerItemKind.Folder && ShowFolderPreviews ? px + 1000 : px;
+                // A folder's LastWriteTime bumps when direct children are added/removed — exactly
+                // when the content preview could change — so it doubles as the cache stamp. Edits
+                // deeper in the tree don't bump it (accepted staleness), and a changed
+                // FolderThumbnails choice doesn't either: that lives in app state, so the changer
+                // must call ThumbDiskCache.Invalidate for the folder.
+                var (stamp, cached) = await Task.Run(() =>
+                {
+                    var mt = CacheStampUtc(path);
+                    var hit = mt is { } m ? ThumbDiskCache.TryGet(path, m, pxKey) : null;
+                    return (mt, hit);
+                });
+                if (ct.IsCancellationRequested) return;
+                if (cached is { } hitPix)
+                {
+                    var wbHit = new WriteableBitmap(hitPix.Width, hitPix.Height);
+                    using (var s = wbHit.PixelBuffer.AsStream()) s.Write(hitPix.Pixels, 0, hitPix.Pixels.Length);
+                    Icon = wbHit;
+                    return;
+                }
+
                 var folderKind = Kind == ExplorerItemKind.Folder ? IconFactory.FolderKindFor(path) : FolderKind.Normal;
                 var pixels = Kind == ExplorerItemKind.Drive
                     ? await Task.Run(() => IconFactory.RenderDrive(px))
@@ -181,6 +204,11 @@ public partial class ExplorerItem : ObservableObject
                 // Themed media folders keep their glyph; only plain folders get a content preview overlay.
                 if (Kind == ExplorerItemKind.Folder && ShowFolderPreviews && folderKind == FolderKind.Normal)
                     await TryOverlayFirstImageAsync(path, pixels, px, px, px);
+
+                // Stored AFTER composition so a hit skips the overlay decode too; fire-and-forget so
+                // the disk write never delays first paint (Store only reads the array, never writes it).
+                if (stamp is { } st)
+                    _ = Task.Run(() => ThumbDiskCache.Store(path, st, pxKey, pixels, px, px));
 
                 var wb = new WriteableBitmap(px, px);
                 using (var s = wb.PixelBuffer.AsStream()) s.Write(pixels, 0, pixels.Length);
@@ -205,6 +233,21 @@ public partial class ExplorerItem : ObservableObject
             // shell call per file whose result was then thrown away in favour of Galileo's own icon.
             if (appIcon || IsImage || PhotoLibrary.IsMedia(path) || DocThumbExts.Contains(ext))
             {
+                var (stamp, cached) = await Task.Run(() =>
+                {
+                    var mt = CacheStampUtc(path);
+                    var hit = mt is { } m ? ThumbDiskCache.TryGet(path, m, px) : null;
+                    return (mt, hit);
+                });
+                if (ct.IsCancellationRequested) return;
+                if (cached is { } hitPix)
+                {
+                    var wbHit = new WriteableBitmap(hitPix.Width, hitPix.Height);
+                    using (var s = wbHit.PixelBuffer.AsStream()) s.Write(hitPix.Pixels, 0, hitPix.Pixels.Length);
+                    Icon = wbHit;
+                    return;
+                }
+
                 // Pooled: the shell hands back its cached 256x256 thumbnail (256 KB), which is 3x over the
                 // Large Object Heap threshold. Allocating one per file drove a gen2 collection storm and
                 // multi-second UI stalls; renting keeps it out of the GC entirely.
@@ -217,6 +260,16 @@ public partial class ExplorerItem : ObservableObject
                 if (ct.IsCancellationRequested) return;
                 if (shot.IsValid)
                 {
+                    if (stamp is { } st)
+                    {
+                        // The rented buffer has slack past the image and goes back to the pool on
+                        // dispose: hand the cache a private copy of exactly ByteCount bytes, never
+                        // the pooled array itself.
+                        var keep = new byte[shot.ByteCount];
+                        Buffer.BlockCopy(shot.Pixels!, 0, keep, 0, shot.ByteCount);
+                        var (w, h) = (shot.Width, shot.Height);
+                        _ = Task.Run(() => ThumbDiskCache.Store(path, st, px, keep, w, h));
+                    }
                     var wbApp = new WriteableBitmap(shot.Width, shot.Height);
                     using (var s = wbApp.PixelBuffer.AsStream()) s.Write(shot.Pixels!, 0, shot.ByteCount);
                     Icon = wbApp;
@@ -240,6 +293,22 @@ public partial class ExplorerItem : ObservableObject
         {
             _iconRequested = false; // scrolled off before its decode slot opened — reload when realized again
         }
+    }
+
+    /// <summary>Last-write time used as the disk-cache validity stamp. Listings usually populate
+    /// <see cref="Modified"/>, but some entry points (This PC, drives) leave it default — then it's
+    /// read from disk here; null means it couldn't be read at all, which just skips the cache for
+    /// this load rather than caching under a made-up stamp.</summary>
+    private DateTime? CacheStampUtc(string path)
+    {
+        if (Modified != default) return Modified.ToUniversalTime();
+        try
+        {
+            return Kind == ExplorerItemKind.File
+                ? File.GetLastWriteTimeUtc(path)
+                : Directory.GetLastWriteTimeUtc(path);
+        }
+        catch { return null; }
     }
 
     private static async Task TryOverlayFirstImageAsync(string folderPath, byte[] folderPixels, int fw, int fh, int px)

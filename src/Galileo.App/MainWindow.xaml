@@ -92,6 +92,15 @@
                             </StackPanel>
                         </Button>
 
+                        <!-- Explorer-style folder tree: drives as roots, children realized lazily on
+                             expand (an eager walk would touch every directory on every disk). -->
+                        <TextBlock Text="Folder tree" Opacity="0.6" FontSize="12" Margin="10,12,0,4" />
+                        <TreeView x:Name="FolderTree" SelectionMode="None"
+                                  CanDragItems="False" CanReorderItems="False"
+                                  ItemInvoked="FolderTree_ItemInvoked" Expanding="FolderTree_Expanding"
+                                  Collapsed="FolderTree_Collapsed"
+                                  AutomationProperties.Name="Folder tree" />
+
                         <!-- Discreet entry: the only vault affordance shown while everything is locked. -->
                         <Button x:Name="VaultsLockedEntry" Click="VaultsLockedEntry_Click"
                                 HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"

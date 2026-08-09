@@ -34,6 +34,7 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 - **Tabs** — Win11-style **folder tabs**: open multiple locations at once, each with its own back/forward history. New-tab (`+`) and close buttons included.
 - **Sidebar** — Home (This PC), Quick access (Desktop/Downloads/Documents/Pictures/Music/Videos), and drives. **Newly mounted/removed drives are detected automatically** and appear without a manual refresh. **This PC** groups items into **Drives** (drives + connected devices, shown first) and **Folders** sections, and each drive shows a **capacity bar with "X free of Y"** like Explorer.
 - **Pinned locations** — pin custom paths to the sidebar's **Pinned** section: a local folder, a **network share** (`\\server\share`), or a **WSL** path (`\\wsl.localhost\<distro>\…`). Use **Add location** in the sidebar (paste a path) or right-click a folder → **Pin to sidebar**; right-click a pin → **Remove from sidebar**. (You can also just type any of these paths into the address bar to navigate.)
+- **Folder tree** — an Explorer-style expandable tree in the sidebar (drives as roots, subfolders load on expand, click to navigate; honors the hidden-items toggles).
 - **Resizable sidebar** — drag the divider between the sidebar and the file pane to resize it (the width is remembered across sessions).
 - **Live updates** — the open folder updates automatically when files change on disk (downloads, other apps, etc.). New items are **inserted in place at their correct sorted position** (and deleted ones removed) without reloading the view, so your **scroll position and selection are kept**. (Uses a file-system watcher; some network/WSL shares don't emit change events — press **F5** there.)
 - **Navigation** — back / forward / up, a clickable **breadcrumb**, and an editable **address bar** (pencil button or type a path + Enter). **Backspace** goes back; **F5** refreshes.
@@ -396,7 +397,7 @@ Turn on **Settings → Developer → Developer Mode** to dock a real **terminal 
 
 ## Roadmap
 
-See **[tasks.md](./tasks.md)** for the full phased breakdown. Not yet implemented: an expandable folder tree in the sidebar, MSIX packaging, slideshow background music, and splitting into `Core`/`Tests` projects.
+See **[tasks.md](./tasks.md)** for the full phased breakdown. Not yet implemented: MSIX packaging, slideshow background music, and splitting into `Core`/`Tests` projects.
 
 ## License
 
